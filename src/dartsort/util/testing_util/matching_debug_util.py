@@ -90,6 +90,7 @@ def yield_step_results(
     chunk_data = matcher.matching_templates.data_at_time(
         t_s,
         scaling=matcher.is_scaling,
+        free_scaling=matcher.is_free_scaling,
         inv_lambda=matcher.inv_lambda,
         scale_min=matcher.amp_scale_min,
         scale_max=matcher.amp_scale_max,
@@ -388,6 +389,7 @@ class DebugMatchingTemplates(MatchingTemplates):
         t_s: float,
         *,
         scaling: bool,
+        free_scaling: bool,
         inv_lambda: float,
         scale_min: float,
         scale_max: float,

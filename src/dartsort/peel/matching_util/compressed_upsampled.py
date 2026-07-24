@@ -258,6 +258,7 @@ class CompressedUpsampledMatchingTemplates(MatchingTemplates):
         t_s: float,
         *,
         scaling: bool,
+        free_scaling: bool,
         inv_lambda: float,
         scale_min: float,
         scale_max: float,
@@ -307,6 +308,7 @@ class CompressedUpsampledMatchingTemplates(MatchingTemplates):
             grouping=self.have_groups,
             upsampling=self.upsampling,
             scaling=scaling,
+            free_scaling=free_scaling,
             needs_fine_pass=self.have_groups or self.upsampling,
             comp_up_max=self.comp_up_max,
             n_templates=self.n_templates,
@@ -350,6 +352,7 @@ class CompressedUpsampledChunkTemplateData(ChunkTemplateData):
     grouping: bool
     upsampling: bool
     scaling: bool
+    free_scaling: bool
     needs_fine_pass: bool
     comp_up_max: int
     n_templates: int

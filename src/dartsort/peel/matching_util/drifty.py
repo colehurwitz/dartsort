@@ -345,6 +345,7 @@ class DriftyMatchingTemplates(MatchingTemplates):
         t_s: float,
         *,
         scaling: bool,
+        free_scaling: bool,
         inv_lambda: float,
         scale_min: float,
         scale_max: float,
@@ -362,6 +363,7 @@ class DriftyMatchingTemplates(MatchingTemplates):
             obj_normsq=normsq,
             obj_n_templates=self.n_units,
             scaling=scaling,
+            free_scaling=free_scaling,
             upsampling=self.upsampling,
             needs_fine_pass=self.upsampling,
             needs_residual=self.upsampling and self.up_method == "direct",
@@ -398,6 +400,7 @@ class DriftyChunkTemplateData(ChunkTemplateData):
     obj_n_templates: int
     upsampling: bool
     scaling: bool
+    free_scaling: bool
     needs_fine_pass: bool
     needs_residual: bool
     prewhiten: bool

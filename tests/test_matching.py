@@ -161,6 +161,7 @@ def test_no_crumbs(subtests, refractory_sim, method, cd_iter, channel_selection_
     chunk_temp_data = matcher.matching_templates.data_at_time(
         1.5,
         scaling=matcher.is_scaling,
+        free_scaling=matcher.is_free_scaling,
         inv_lambda=matcher.inv_lambda,
         scale_min=matcher.amp_scale_min,
         scale_max=matcher.amp_scale_max,
