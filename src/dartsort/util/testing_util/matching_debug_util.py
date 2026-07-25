@@ -415,6 +415,7 @@ class DebugMatchingTemplates(MatchingTemplates):
             scale_min=torch.asarray(scale_min, device=self.b.pconv.device),
             scale_max=torch.asarray(scale_max, device=self.b.pconv.device),
             scaling=scaling,
+            free_scaling=free_scaling,
             needs_fine_pass=self.b.templates_up.shape[1] > 1 or scale_max > 3.0,
             upsampling=self.b.templates_up.shape[1] > 1,
             up_factor=self.b.templates_up.shape[1],
@@ -439,6 +440,7 @@ class DebugChunkTemplateData(ChunkTemplateData):
     scale_min: Tensor
     scale_max: Tensor
     scaling: bool
+    free_scaling: bool
     upsampling: bool
     up_factor: int
     needs_fine_pass: bool
