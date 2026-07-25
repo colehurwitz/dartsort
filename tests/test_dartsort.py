@@ -106,7 +106,7 @@ def test_fakedata(tmp_path, sim_size, simulations, sdcfg):
 
 def test_cli_help():
     # at least make sure the cli can do -h
-    res = subprocess.run(["dartsort", "-h"], capture_output=True)
+    res = subprocess.run(["dartsort", "-h"], capture_output=True, check=False)
     assert not res.returncode, res.stderr.decode()
 
 
@@ -115,7 +115,10 @@ def test_initial_detection_swap(tmp_path, simulations, type):
     sim = simulations["driftn_szmini"]
     sim["templates"].to_npz(tmp_path / "temps.npz")
 
-    cfg_add: dict[str, Any] = {"whiten_strategy": "none", "whiten_temporal_length": None}
+    cfg_add: dict[str, Any] = {
+        "whiten_strategy": "none",
+        "whiten_temporal_length": None,
+    }
     if type == "drifty_match":
         type = "match"
         cfg_add["matching_template_type"] = "drifty"

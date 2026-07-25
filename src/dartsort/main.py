@@ -1,9 +1,10 @@
 """High-level spike sorting toolbox functions."""
 
 import traceback
+from collections.abc import Sequence
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Sequence, TypedDict
+from typing import Any, TypedDict
 
 from dredge.motion_util import MotionEstimate
 from spikeinterface.core import BaseRecording, Motion
@@ -42,6 +43,7 @@ from .util.internal_config import (
     default_template_cfg,
     default_thresholding_cfg,
     default_waveform_cfg,
+    no_resid_peeling_fit_sampling_cfg,
     to_internal_config,
 )
 from .util.job_util import ensure_computation_config
@@ -164,7 +166,7 @@ def dartsort(
                 error_data_path = output_dir / "error_state"
                 with traceback_path.open("w") as f:
                     traceback.print_exception(e, file=f)
-                logger.exception(e)
+                logger.exception()
                 if cfg.save_everything_on_error:
                     logger.critical(
                         f"Hit an error. Copying outputs to {error_data_path} "
@@ -196,7 +198,7 @@ def dartsort(
         traceback_path = output_dir / "traceback.txt"
         with traceback_path.open("w") as f:
             traceback.print_exception(e, file=f)
-        logger.exception(e)
+        logger.exception()
         logger.critical(f"Hit an error. Wrote traceback to {traceback_path}.")
         raise
 
@@ -661,7 +663,7 @@ def grab(
     sorting: DARTsortSorting,
     waveform_cfg: WaveformConfig = default_waveform_cfg,
     featurization_cfg: FeaturizationConfig = default_featurization_cfg,
-    sampling_cfg: FitSamplingConfig = default_peeling_fit_sampling_cfg,
+    sampling_cfg: FitSamplingConfig = no_resid_peeling_fit_sampling_cfg,
     chunk_starts_samples=None,
     overwrite=False,
     show_progress=True,

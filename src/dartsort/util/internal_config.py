@@ -235,6 +235,7 @@ class FitSamplingConfig:
 
 
 default_peeling_fit_sampling_cfg = FitSamplingConfig()
+no_resid_peeling_fit_sampling_cfg = FitSamplingConfig(n_residual_snips=0)
 default_clustering_fit_sampling_cfg = FitSamplingConfig(
     max_waveforms_fit=1024 * 1000, n_waveforms_fit=1024 * 1000
 )
