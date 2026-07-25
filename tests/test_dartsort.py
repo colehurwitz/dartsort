@@ -127,6 +127,8 @@ def test_initial_detection_swap(tmp_path, simulations, type):
     if type == "subtract":
         cfg_add["nn_denoiser_class_name"] = "SingleChannelWaveformDenoiser"
         cfg_add["nn_denoiser_pretrained_path"] = str(default_pretrained_path)
+        cfg_add["voltage_threshold"] = 4.0
+        cfg_add["deduplication_radius_um"] = 150.0
 
     cfg = dartsort.DeveloperConfig(
         dredge_only=True,
