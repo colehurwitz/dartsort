@@ -27,7 +27,6 @@ from .peel_base import PeelingBatchResult
 
 if TYPE_CHECKING:
     from ..transform.pipeline import WaveformPipeline
-    from ..util.internal_config import PeakSign
 
 
 def denoiser_time_shifts(
@@ -335,17 +334,18 @@ def subtract_chunk(
         if not times_samples.numel():
             break
 
-        keep = convexity_filter(
-            residual,
-            times_samples,
-            channels,
-            threshold=convexity_threshold,
-            radius=convexity_radius,
-        )
-        times_samples = times_samples[keep]
-        channels = channels[keep]
-        if not times_samples.numel():
-            break
+        if convexity_threshold:
+            keep = convexity_filter(
+                residual,
+                times_samples,
+                channels,
+                threshold=convexity_threshold,
+                radius=convexity_radius,
+            )
+            times_samples = times_samples[keep]
+            channels = channels[keep]
+            if not times_samples.numel():
+                break
 
         voltages = residual[times_samples, channels]
 
@@ -371,7 +371,7 @@ def subtract_chunk(
 
             pd_mask = torch.ones_like(detection_mask)
             pd_mask[time_ix[:, :, None], chan_ix[:, None, :]] = 0
-            pd_mask = torch.logical_or(pd_mask, residual < 0)
+            pd_mask.logical_or_(residual < 0)
             detection_mask = torch.logical_and(detection_mask, pd_mask)
 
         # throw away spikes which cannot be subtracted

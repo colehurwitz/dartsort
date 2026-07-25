@@ -553,6 +553,7 @@ class DriftyChunkTemplateData(ChunkTemplateData):
                 padding=padding,
                 normsq=self.obj_normsq,
                 scaling=self.scaling,
+                free_scaling=self.free_scaling,
                 inv_lambda=self.inv_lambda,
                 scale_min=self.scale_min,
                 scale_max=self.scale_max,
@@ -729,6 +730,7 @@ def _upsampling_fine_match(
     padding: int,
     normsq: Tensor,
     scaling: bool,
+    free_scaling: bool,
     inv_lambda: Tensor,
     scale_min: Tensor,
     scale_max: Tensor,
@@ -748,7 +750,7 @@ def _upsampling_fine_match(
     conv_up = conv_snips @ interpolator
 
     # compute objective
-    if scaling and inv_lambda == 0.0:
+    if free_scaling:
         scalings = conv_up.relu().div_(normsq[template_inds][:, None])
         obj_up = scalings.mul(conv_up)
     elif scaling:

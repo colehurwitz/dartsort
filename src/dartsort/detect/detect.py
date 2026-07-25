@@ -84,16 +84,16 @@ def detect_and_deduplicate(
         Tp = slen * nrep
         key = (traces.device.type, traces.device.index, Tp, dedup_temporal_radius)
         if key in _pepper:
-            dedup_time_salt = _pepper[key]
+            dedup_time_pepper = _pepper[key]
         else:
             # favor earlier times when deduplicating identical values (at float16 prec)
-            dedup_time_salt = torch.linspace(
+            dedup_time_pepper = torch.linspace(
                 dedup_salt_eps, 0.0, steps=slen, device=traces.device
             )
-            dedup_time_salt = dedup_time_salt.repeat(nrep)
-            _pepper[key] = dedup_time_salt = dedup_time_salt
+            dedup_time_pepper = dedup_time_pepper.repeat(nrep)
+            _pepper[key] = dedup_time_pepper
     else:
-        dedup_time_salt = None
+        dedup_time_pepper = None
 
     for i0 in range(0, T, batch_size):
         i1 = min(T, i0 + batch_size)
@@ -131,6 +131,9 @@ def detect_and_deduplicate(
         tmp = peak
         del peak
 
+        if detection_mask is not None:
+            detect.logical_and_(detection_mask[i00:i11].T)
+
         # check if deduping
         if not will_dedup:
             all_peaks[i0:i1] = detect[:, istart:iend].T
@@ -139,11 +142,9 @@ def detect_and_deduplicate(
         # -- deduplicate peaks
         if dedup_chans_salt is not None:
             Xdd[:-1] += dedup_chans_salt
-        if dedup_time_salt is not None:
-            Xdd[:-1] += dedup_time_salt[i00:i11]
+        if dedup_time_pepper is not None:
+            Xdd[:-1] += dedup_time_pepper[i00:i11]
         mask_out = torch.logical_not(detect, out=tmp)
-        if detection_mask is not None:
-            mask_out.logical_and_(detection_mask[i00:i11].T)
         Xdd[:-1].masked_fill_(mask_out, 0.0)
 
         # no-threshold max pool for deduplication
