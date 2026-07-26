@@ -94,7 +94,6 @@ class GrabAndFeaturize(BasePeeler):
     ) -> "PeelingBatchResult":
         """Override process_chunk to skip empties."""
         assert not peel_kw
-        print(f"{return_residual=} {n_resid_snips=}")
         if chunk_end_samples is None:
             chunk_end_samples = min(
                 self.recording.get_num_samples(),
