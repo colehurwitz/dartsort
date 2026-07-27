@@ -110,6 +110,7 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
         self.inv_lambda = (
             1.0 / p.amplitude_scaling_variance if self.is_scaling else float("inf")
         )
+        self.is_free_scaling = self.inv_lambda == 0 and p.amplitude_scaling_boundary > 1e6
         self.amp_scale_max = 1.0 + p.amplitude_scaling_boundary
         self.amp_scale_min = 1.0 / self.amp_scale_max
         self.whiten_pad = max(0, whiten_kernel_length - 1)
@@ -280,6 +281,7 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
         chunk_template_data = self.matching_templates.data_at_time(
             t_s=chunk_center_seconds,
             scaling=self.is_scaling,
+            free_scaling=self.is_free_scaling,
             inv_lambda=self.inv_lambda,
             scale_min=self.amp_scale_min,
             scale_max=self.amp_scale_max,

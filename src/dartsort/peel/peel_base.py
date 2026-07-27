@@ -2,13 +2,14 @@
 
 import gc
 import tempfile
+from collections.abc import Sequence
 from concurrent.futures import CancelledError
 from contextlib import contextmanager
 from itertools import repeat
 from pathlib import Path
 from sys import getrefcount
 from threading import Lock, local
-from typing import Any, Sequence, TypedDict
+from typing import Any, TypedDict
 from warnings import catch_warnings, filterwarnings
 
 import h5py
@@ -34,7 +35,7 @@ from ..util.internal_config import (
 from ..util.job_util import ensure_computation_config
 from ..util.logging_util import get_logger, progbar
 from ..util.multiprocessing_util import handle_negative_jobs, pool_from_cfg
-from ..util.py_util import delay_keyboard_interrupt
+from ..util.py_util import delay_keyboard_interrupt, panic
 from ..util.torch_util import BModule, cleanup_and_log_gpu_usage
 
 logger = get_logger(__name__)
@@ -161,10 +162,10 @@ class BasePeeler(BModule):
     def peel(
         self,
         output_hdf5_filename,
+        *,
         chunk_starts_samples=None,
         chunk_length_samples=None,
         total_residual_snips=None,
-        residual_snips_per_chunk=None,
         stop_after_n_waveforms: int | None = None,
         ensure_coverage: float | None = None,
         shuffle=False,
@@ -190,7 +191,6 @@ class BasePeeler(BModule):
             # all of these features would require the h5 file.
             assert ignore_resuming
             assert not residual_to_h5
-            assert residual_snips_per_chunk is None
             assert total_residual_snips is None
 
         if task_name is None:
@@ -228,7 +228,8 @@ class BasePeeler(BModule):
                 f"{next_chunk_index}/{n_chunks_orig}."
             )
         else:
-            assert False
+            panic()
+
         if done:
             return
         chunks_to_do = chunk_starts_samples[next_chunk_index:]
@@ -237,11 +238,11 @@ class BasePeeler(BModule):
         max_resid_per_chk = clen // self.spike_length_samples
         if (
             total_residual_snips is not None
+            and total_residual_snips > 0
             and ensure_coverage
             and stop_after_n_waveforms is not None
         ):
             assert 0 <= ensure_coverage <= 1
-            assert residual_snips_per_chunk is None
             resids_remaining = total_residual_snips - resids_so_far
             chunks_remaining = len(chunks_to_do)
             chunks_done = n_chunks_orig - chunks_remaining
@@ -249,7 +250,7 @@ class BasePeeler(BModule):
             chunks_cover_remaining = chunks_cover - chunks_done
             if chunks_cover_remaining == 0:
                 assert resids_remaining == 0
-                residual_snips_per_chunk = 0
+                residual_snips_per_chunk = None
             else:
                 residual_snips_per_chunk = divide_randomly(
                     resids_remaining,
@@ -263,26 +264,25 @@ class BasePeeler(BModule):
                     f"residual snips on average per coverage chunk ({chunks_cover_remaining} "
                     "remaining to hit coverage)."
                 )
-        elif total_residual_snips is not None:
-            assert residual_snips_per_chunk is None
+        elif total_residual_snips:
             resids_remaining = total_residual_snips - resids_so_far
             residual_snips_per_chunk = divide_randomly(
                 resids_remaining, len(chunks_to_do), self.fit_subsampling_random_state
             )
+        else:
+            residual_snips_per_chunk = None
 
         if residual_snips_per_chunk is None:
-            if residual_to_h5:
-                residual_snips_per_chunk = repeat(1)
-            else:
-                residual_snips_per_chunk = repeat(None)
-        elif isinstance(residual_snips_per_chunk, int):
-            residual_to_h5 = bool(residual_snips_per_chunk)
-            residual_snips_per_chunk = repeat(residual_snips_per_chunk)
-        else:
+            zip_strict = False
+            residual_to_h5 = False
+            residual_snips_per_chunk = repeat(None)
+        elif residual_snips_per_chunk is not None:
             residual_to_h5 = True
             assert len(residual_snips_per_chunk) == len(chunks_to_do)
+            zip_strict = True
+        assert residual_snips_per_chunk is not None
 
-        jobs = list(zip(chunks_to_do, residual_snips_per_chunk))
+        jobs = list(zip(chunks_to_do, residual_snips_per_chunk, strict=zip_strict))
 
         if not chunks_to_do.size:
             return output_hdf5_filename
@@ -349,7 +349,9 @@ class BasePeeler(BModule):
                 ) as (output_h5, h5_spike_datasets, residual_file, n_spikes):
                     batch_count = 0
                     try:
-                        for result, chunk_start_samples in zip(results, chunks_to_do):
+                        for result, chunk_start_samples in zip(
+                            results, chunks_to_do, strict=True
+                        ):
                             n_new_spikes = self.gather_chunk_result(
                                 cur_n_spikes=n_spikes,
                                 chunk_start_samples=chunk_start_samples,
@@ -395,7 +397,6 @@ class BasePeeler(BModule):
 
             # we very much do not want to leak self into a global and have its
             # memory tied up while dartsort wants to go do other stuff
-            global _peeler_process_context
             del _peeler_process_context.ctx
             _peeler_process_context.ctx = None
 
@@ -483,7 +484,7 @@ class BasePeeler(BModule):
         if not self.featurization_pipeline:
             return {}
 
-        waveforms, features = self.featurization_pipeline(
+        _waveforms, features = self.featurization_pipeline(
             collisioncleaned_waveforms, **fixed_properties
         )
         return features
@@ -802,9 +803,9 @@ class BasePeeler(BModule):
                     **fixed_properties,
                 )
                 if getrefcount(waveforms) > 2:
-                    logger.warn(f"Fit waveforms had {getrefcount(waveforms)=}")
+                    logger.warning(f"Fit waveforms had {getrefcount(waveforms)=}")
                     for obj in gc.get_referrers(waveforms):
-                        logger.warn(f"{repr(obj)}: {str(obj)}")
+                        logger.warning(f"{obj!r}: {obj!s}")
                 featurization_pipeline = featurization_pipeline.to("cpu")
                 self.featurization_pipeline = featurization_pipeline
             finally:
@@ -870,7 +871,7 @@ class BasePeeler(BModule):
             _ix = _kmeansppix(len(chunk_starts_samples), n_chunks, self.random_seed)
             chunk_starts_samples = chunk_starts_samples[_ix]
         else:
-            assert False
+            panic(self.fit_sampling_cfg.chunk_sampling)
 
         if ordered:
             chunk_starts_samples.sort()
@@ -1158,7 +1159,7 @@ class BasePeeler(BModule):
                 assert Path(residual_filename).exists()
             else:
                 residual_mode = "wb"
-            residual_file = open(residual_filename, mode=residual_mode)
+            residual_file = residual_filename.open(mode=residual_mode)
 
         try:
             yield output_h5, h5_spike_datasets, residual_file, n_spikes
@@ -1244,8 +1245,6 @@ def _peeler_process_init(
     is_local,
     to_cpu,
 ):
-    global _peeler_process_context
-
     # figure out what device to work on
     my_rank = rank_queue.get()
     if device is None:

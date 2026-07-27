@@ -12,7 +12,6 @@ from linear_operator import operators
 from scipy.fftpack import next_fast_len
 from scipy.linalg import eigh
 from scipy.spatial.distance import pdist, squareform
-from scipy.stats import norm
 from sklearn.covariance import GraphicalLassoCV, graphical_lasso
 from sklearn.decomposition import PCA
 from torch import Tensor
@@ -30,6 +29,7 @@ from ..util.internal_config import (
 from ..util.job_util import ensure_computation_config
 from ..util.logging_util import DARTSORTDEBUG, get_logger, progbar, progrange
 from ..util.motion import MotionInfo
+from ..util.py_util import panic
 from ..util.spiketorch import spawn_torch_rg
 from ..util.torch_util import BModule
 from ..util.waveform_util import make_channel_index
@@ -369,7 +369,7 @@ class StationaryFactorizedNoise(torch.nn.Module):
         obj = None  # var for reusing buffers
         units = []
         scores = []
-        for j in progrange(size, desc="False positives"):
+        for _ in progrange(size, desc="False positives"):
             # note: simulating with padding so that the valid conv has length t.
             sample = self.simulate(t=t + nt - 1, generator=generator)[0].T
             assert sample.isfinite().all()
@@ -512,7 +512,7 @@ class EmbeddedNoise(BModule):
         elif self.mean_kind == "full":
             return cast(Tensor, self.mean)
         else:
-            assert False
+            panic(self.mean_kind)
 
     def marginal_mean(self):
         """Return noise mean as a rank x channels tensor"""
@@ -523,7 +523,7 @@ class EmbeddedNoise(BModule):
             return cast(Tensor, self.mean)[:, None].broadcast_to(shape).contiguous()
         if self.mean_kind == "full":
             return self.mean
-        assert False
+        panic(self.mean_kind)
 
     def whitener(self, channels=slice(None)):
         cov = self.marginal_covariance(channels=channels)
@@ -769,7 +769,7 @@ class EmbeddedNoise(BModule):
             marg_cov = marg_cov.reshape(r * ncl, r * nc)
             return linear_operator.to_linear_operator(marg_cov)
 
-        if self.cov_kind in "factorized":
+        if self.cov_kind == "factorized":
             rank_root = self.b.rank_vt.T * self.b.rank_std
             rank_cov = rank_root @ rank_root.T
             chan_root = self.b.channel_vt.T[channels] * self.b.channel_std
@@ -803,7 +803,7 @@ class EmbeddedNoise(BModule):
                 return more_operators.NonSquareBlockLinearOperator(blocks)
             return operators.BlockDiagLinearOperator(blocks)
 
-        assert False
+        panic(self.cov_kind)
 
     @classmethod
     def estimate(
@@ -852,7 +852,7 @@ class EmbeddedNoise(BModule):
             )
             x = x - mean
         else:
-            assert False
+            panic(mean_kind)
 
         # estimate covs
         # still n, rank, n_channels
@@ -1096,56 +1096,6 @@ class EmbeddedNoise(BModule):
             rgeom=rgeom,
         )
 
-    def detection_prior_log_prob(self, templates_pca_projected, threshold=10.0):
-        """
-        Computes:
-            z(T) = log[p(noise det | T)]
-                 = log[P(|N|^2 - |N - T|^2 > threshold^2)]
-                 = log[log P(2N.T > threshold^2 + |T|^2)]
-
-        Then, later, in mixture modeling one can compute
-            p(l = noise | x, T) = log pi_noise + log N(x | noise) - z(T)
-
-        It's a little bit counterintuitive: this boosts the noise probability more
-        for units with higher signal templates, since their FP probability is lower.
-
-        Note that since N ~ N(0, C), N.T ~ N(0, tr TCT'). Or, whatever version of
-        that makes the dimensions work out. Thus we need to compute
-            log normal_sf(0.5 * (thresh^2 + |T|^2) ; mean=0, scale=sqrt(tr TCT))
-        """
-        C = self.full_dense_cov()
-        templates_pca_projected = torch.asarray(
-            templates_pca_projected, device=C.device
-        )
-        T = templates_pca_projected.reshape(len(templates_pca_projected), -1)
-        assert C.shape == (T.shape[1], T.shape[1])
-        tr = torch.einsum("nc,cd,nd->n", T, C, T)
-        scale = tr.sqrt_()
-        crit = T.square().sum(dim=1).add_(threshold**2).mul_(0.5)
-        return norm.logsf(crit.numpy(force=True), scale=scale.numpy(force=True))
-
-    def channelwise_detection_prior_log_prob(
-        self, threshold=4.0, n_samples=8192, seed=0
-    ):
-        """Compute the marginal probability that the norm is larger than threshold on each channel.
-
-        TPCA is isometry, so no need to know the basis when working with the norm. Further, we can
-        sample independent normals using the eigs.
-        """
-        probs = np.zeros(self.n_channels)
-        rg = np.random.default_rng(seed)
-        samples = rg.normal(size=(n_samples, self.rank))
-        tmp = samples.copy()
-        for channel in range(self.n_channels):
-            chan = torch.atleast_1d(torch.tensor(channel))
-            marginal_cov = self.marginal_covariance(channels=chan).to_dense()
-            marginal_cov = marginal_cov.numpy(force=True).astype(np.float64)
-            eigs = np.linalg.eigvalsh(marginal_cov)
-            stds = np.sqrt(eigs)
-            norms = np.linalg.norm(np.multiply(samples, stds, out=tmp), axis=1)
-            probs[channel] = np.mean(norms > threshold)
-        return np.log(probs)
-
 
 def generate_interpolated_residual_snippets(
     *,
@@ -1370,13 +1320,13 @@ def fp_control_threshold(
     # account for different time ranges
     fp_per_tp = fp_num_frames / (clustering_subsampling_rate * clustering_num_frames)
 
-    for uid, tp in zip(tp_unit_ids[has_fp], tp_counts[has_fp]):
+    for uid, tp in zip(tp_unit_ids[has_fp], tp_counts[has_fp], strict=True):
         in_uid = fp_dataframe.units == uid
         if not in_uid.any():
             continue
 
         # does the unit even have any fps at this threshold?
-        fp_scores = fp_dataframe[in_uid].scores.values
+        fp_scores = fp_dataframe[in_uid].scores.array
         if threshold > fp_scores.max():
             continue
 
@@ -1404,7 +1354,7 @@ def fp_control_threshold(
                 break
         else:
             # a break should always be hit thanks to the continues above
-            assert False
+            panic()
 
     return threshold
 
@@ -1538,7 +1488,7 @@ def residual_welch_whitener(
         # to torch, whiten
         snip = torch.asarray(snip).to(device=device, non_blocking=True)
         if W is not None:
-            snip = torch.einsum("ntc,cd->ntd", snip, W)
+            snip = torch.einsum("ntc,dc->ntd", snip, W)
 
         # Welch
         snip = snip.permute(0, 2, 1).reshape(-1, snip.shape[1])

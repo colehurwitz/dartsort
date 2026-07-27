@@ -1,9 +1,10 @@
 """High-level spike sorting toolbox functions."""
 
 import traceback
+from collections.abc import Sequence
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Sequence, TypedDict
+from typing import Any, TypedDict
 
 from dredge.motion_util import MotionEstimate
 from spikeinterface.core import BaseRecording, Motion
@@ -42,6 +43,7 @@ from .util.internal_config import (
     default_template_cfg,
     default_thresholding_cfg,
     default_waveform_cfg,
+    no_resid_peeling_fit_sampling_cfg,
     to_internal_config,
 )
 from .util.job_util import ensure_computation_config
@@ -63,7 +65,7 @@ from .util.motion import MotionInfo, get_motion_info
 from .util.noise_util import Whitener
 from .util.peel_util import run_peeler
 from .util.preprocess_util import preprocess
-from .util.py_util import dartcopytree, ensure_path, timer
+from .util.py_util import dartcopytree, ensure_path, panic, timer
 from .util.torch_util import cleanup_and_log_gpu_usage
 
 logger = get_logger(__name__)
@@ -162,9 +164,9 @@ def dartsort(
             except Exception as e:
                 traceback_path = output_dir / "traceback.txt"
                 error_data_path = output_dir / "error_state"
-                with open(traceback_path, "w") as f:
+                with traceback_path.open("w") as f:
                     traceback.print_exception(e, file=f)
-                logger.exception(e)
+                logger.exception()
                 if cfg.save_everything_on_error:
                     logger.critical(
                         f"Hit an error. Copying outputs to {error_data_path} "
@@ -194,9 +196,9 @@ def dartsort(
         )
     except Exception as e:
         traceback_path = output_dir / "traceback.txt"
-        with open(traceback_path, "w") as f:
+        with traceback_path.open("w") as f:
             traceback.print_exception(e, file=f)
-        logger.exception(e)
+        logger.exception()
         logger.critical(f"Hit an error. Wrote traceback to {traceback_path}.")
         raise
 
@@ -335,7 +337,7 @@ def _dartsort_impl(
         is_final = step == cfg.matching_iterations
 
         if step == 0:
-            assert False
+            panic(step)
         elif step == 1:
             previous_detection_cfg = cfg.initial_detection_cfg
         else:
@@ -379,7 +381,7 @@ def _dartsort_impl(
             break
 
         with timer(f"cluster{step}", ret["timing"]):
-            if step_clus_cfg or step_ref_cfgs is not None and len(step_ref_cfgs):
+            if step_clus_cfg or (step_ref_cfgs is not None and len(step_ref_cfgs)):
                 sorting = cluster(
                     recording=recording,
                     sorting=sorting,
@@ -661,7 +663,7 @@ def grab(
     sorting: DARTsortSorting,
     waveform_cfg: WaveformConfig = default_waveform_cfg,
     featurization_cfg: FeaturizationConfig = default_featurization_cfg,
-    sampling_cfg: FitSamplingConfig = default_peeling_fit_sampling_cfg,
+    sampling_cfg: FitSamplingConfig = no_resid_peeling_fit_sampling_cfg,
     chunk_starts_samples=None,
     overwrite=False,
     show_progress=True,

@@ -1,6 +1,6 @@
 """Grab and featurize events at known times."""
 
-from typing import Mapping
+from collections.abc import Mapping
 
 import numpy as np
 import torch
@@ -13,7 +13,9 @@ from ..util.internal_config import (
     FitSamplingConfig,
     WaveformConfig,
     default_waveform_cfg,
+    no_resid_peeling_fit_sampling_cfg,
 )
+from ..util.py_util import panic
 from ..util.spiketorch import _nonzero_static, grab_spikes
 from ..util.waveform_util import make_channel_index
 from .peel_base import (
@@ -38,7 +40,7 @@ class GrabAndFeaturize(BasePeeler):
         times_samples,
         fixed_properties: Mapping[str, np.ndarray | torch.Tensor] | None = None,
         chunk_length_samples=30_000,
-        fit_sampling_cfg: FitSamplingConfig = FitSamplingConfig(n_residual_snips=0),
+        fit_sampling_cfg: FitSamplingConfig = no_resid_peeling_fit_sampling_cfg,
         waveform_cfg: WaveformConfig = default_waveform_cfg,
         batch_size: int = 2048,
         dtype=torch.float,
@@ -258,7 +260,7 @@ def _cat_results(results):
                     rdict[k] = []
                 rdict[k].append(v)  # type: ignore
             else:
-                assert False
+                panic()
     res = {}
     for k, v in rdict.items():
         if k in ("n_spikes", "chunk_center_s"):
@@ -269,7 +271,7 @@ def _cat_results(results):
             elif isinstance(v[0], np.ndarray):
                 res[k] = np.concatenate(v)
             else:
-                assert False
+                panic()
         else:
             res[k] = v
     return res

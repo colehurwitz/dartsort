@@ -1934,8 +1934,7 @@ class TruncatedSpikeData(BatchedSpikeData):
             d[:n_units_new, :n_units_new] = distances
             d[n_units_new:, n_units_new:].fill_diagonal_(0.0)
             distances = d
-        if n_new:
-            self.update_adjacency(n_units=n_units_new + n_new)
+        self.update_adjacency(n_units=n_units_new + n_new)
         if pnoid and distances is not None:
             _max_cand = self.candidates.amax()
             assert _max_cand < distances.shape[0], f"{_max_cand} {distances.shape}"
@@ -3263,9 +3262,9 @@ class TruncatedMixtureModel(BaseMixtureModel):
             max_group_size=max(1, self.p.split_k - 1),
         )
         if _stop_after:
-            split_groups = list(
+            split_groups = [
                 sg for _, sg in zip(range(_stop_after), split_groups, strict=False)
-            )
+            ]
         if show_progress:
             split_groups = progbar(split_groups, desc="Split", smoothing=0.0)
 
@@ -4414,14 +4413,14 @@ def get_full_neighborhood_data(
     ):
         in_unit = np.flatnonzero(sorting.labels == uid)
         if in_unit.size > fit_count:
-            fit_ixs = rg.choice(in_unit, size=fit_count)
+            fit_ixs = rg.choice(in_unit, size=fit_count, replace=False)
             fit_ixs.sort()
         elif in_unit.size == fit_count:
             fit_ixs = in_unit
         else:
             panic()
         if fit_ixs.size > train_count:
-            train_ixs = rg.choice(fit_ixs, size=train_count)
+            train_ixs = rg.choice(fit_ixs, size=train_count, replace=False)
             train_ixs.sort()
         elif fit_ixs.size == train_count:
             train_ixs = fit_ixs
@@ -5535,7 +5534,7 @@ def evaluate_group_demolitions(
     if mean_eval_resp is None:
         mean_eval_resp = mean_responsibilities(scores=eval_scores, n_units=mm.n_units)
     ratio = mean_train_resp[group] / mean_eval_resp[group]
-    can_demolish = ratio > 0  # mm.p.demolition_min_resp_ratio
+    can_demolish = ratio > mm.p.demolition_min_resp_ratio
 
     if not can_demolish.any():
         return GroupDemolition(unit_ids=group, improvement=0.0, demolished=None)

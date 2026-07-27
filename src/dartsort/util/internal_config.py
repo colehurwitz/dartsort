@@ -174,7 +174,7 @@ class InterpolationParams:
     def extrap_diff(self):
         if self.actual_extrap_method != self.method:
             return True
-        if self.actual_extrap_kernel != self.kernel:
+        if self.actual_extrap_kernel != self.kernel:  # noqa: SIM103
             return True
         return False
 
@@ -235,6 +235,7 @@ class FitSamplingConfig:
 
 
 default_peeling_fit_sampling_cfg = FitSamplingConfig()
+no_resid_peeling_fit_sampling_cfg = FitSamplingConfig(n_residual_snips=0)
 default_clustering_fit_sampling_cfg = FitSamplingConfig(
     max_waveforms_fit=1024 * 1000, n_waveforms_fit=1024 * 1000
 )
@@ -537,7 +538,7 @@ class RefinementConfig:
     robust_fixed_std_dataset: str = "collidedness"
     robust_fixed_power: float = 40.0
     robust_df: float = 4.0
-    demolition_min_resp_ratio: float = 0.9
+    demolition_min_resp_ratio: float = 0.0
     demolish_during_selection: bool = False
     refit_in_demolition: bool = False
     em_after_demolish: bool = True
@@ -561,7 +562,7 @@ class RefinementConfig:
     qda_min_coverage: float = 0.35
     qda_min_iou: float = 0.5
     qda_force_merge_for_temp_dist_below: float = 0.3
-    spikeinterface_merge_preset: str | Literal["none"] | None = None
+    spikeinterface_merge_preset: str | Literal["none"] = "none"
     spikeinterface_merge_max_distance: float = 0.8
     spikeinterface_merge_min_coentropy: float | None = 0.01
     spikeinterface_merge_coent_coverage: float = 0.8
@@ -699,7 +700,7 @@ class SubtractionConfig:
     remove_exact_duplicates: bool = True
     positive_temporal_dedup_radius_samples: int = 41
     subtract_radius_um: float = 200.0
-    residnorm_decrease_threshold: float = 9.0
+    residnorm_decrease_threshold: float = 7.0
     decrease_objective: Literal["norm", "normsq", "deconv"] = "deconv"
     growth_tolerance: float | None = None
     trough_priority: float | None = 2.0
@@ -772,7 +773,7 @@ class MatchingConfig:
     coarse_cd: bool = True
 
     # template matching parameters
-    threshold: float | Literal["fp_control"] = 8.0
+    threshold: float | Literal["fp_control"] = 6.0
     template_svd_compression_rank: int = 5
     template_svd_compression_min_explained_variance: float = 5e-3
     up_factor: int = 4
@@ -929,6 +930,7 @@ default_agglomerate_cfg = RefinementConfig(
         merge_distance_threshold=0.6, linkage="single"
     ),
     dedup_ms=0.5,
+    spikeinterface_merge_preset="none",
 )
 default_post_refinement_cfg = RefinementConfig(refinement_strategy="filter")
 default_post_refinement_cfgs = (default_post_refinement_cfg,)

@@ -81,6 +81,7 @@ class MatchingTemplates(BModule):
         t_s: float,
         *,
         scaling: bool,
+        free_scaling: bool,
         inv_lambda: float,
         scale_min: float,
         scale_max: float,
@@ -143,6 +144,7 @@ class ChunkTemplateData:
     coarse_objective: bool
     upsampling: bool
     scaling: bool
+    free_scaling: bool
     needs_fine_pass: bool
     needs_residual: bool
     up_factor: int
@@ -231,7 +233,7 @@ class ChunkTemplateData:
         assert conv.shape == out.shape
         if scalings_out is not None:
             assert scalings_out.shape == out.shape
-        if self.scaling and self.inv_lambda == 0.0:
+        if self.free_scaling:
             assert scalings_out is not None
             return _free_coarse_objective(
                 conv=conv, normsq=self.obj_normsq, out=out, scalings=scalings_out

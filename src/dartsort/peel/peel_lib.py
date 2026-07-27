@@ -19,6 +19,7 @@ from ..util.internal_config import (
     WaveformConfig,
 )
 from ..util.job_util import ensure_computation_config
+from ..util.py_util import panic
 from ..util.spiketorch import grab_spikes, ptp, subtract_spikes_
 from ..util.torch_util import torch_compile
 from ..util.waveform_util import get_relative_subset, make_channel_index
@@ -26,7 +27,6 @@ from .peel_base import PeelingBatchResult
 
 if TYPE_CHECKING:
     from ..transform.pipeline import WaveformPipeline
-    from ..util.internal_config import PeakSign
 
 
 def denoiser_time_shifts(
@@ -47,7 +47,7 @@ def denoiser_time_shifts(
     elif denoiser_realignment_channel == "denoised":
         main_channel_rel_inds = ptp(waveforms).nan_to_num_(nan=-torch.inf).argmax(dim=1)
     else:
-        assert False
+        panic(denoiser_realignment_channel)
     denoised_main_channel_traces = waveforms.take_along_dim(
         dim=2, indices=main_channel_rel_inds[:, None, None]
     )
@@ -123,7 +123,7 @@ def check_residual_decrease(
             threshold = threshold**2
         reduction = orig_decobj - new_decobj
     else:
-        assert False
+        panic(decrease_objective)
 
     keep = cast(torch.Tensor, threshold < reduction)
     (keep,) = keep.nonzero(as_tuple=True)
@@ -334,17 +334,18 @@ def subtract_chunk(
         if not times_samples.numel():
             break
 
-        keep = convexity_filter(
-            residual,
-            times_samples,
-            channels,
-            threshold=convexity_threshold,
-            radius=convexity_radius,
-        )
-        times_samples = times_samples[keep]
-        channels = channels[keep]
-        if not times_samples.numel():
-            break
+        if convexity_threshold:
+            keep = convexity_filter(
+                residual,
+                times_samples,
+                channels,
+                threshold=convexity_threshold,
+                radius=convexity_radius,
+            )
+            times_samples = times_samples[keep]
+            channels = channels[keep]
+            if not times_samples.numel():
+                break
 
         voltages = residual[times_samples, channels]
 
@@ -370,7 +371,7 @@ def subtract_chunk(
 
             pd_mask = torch.ones_like(detection_mask)
             pd_mask[time_ix[:, :, None], chan_ix[:, None, :]] = 0
-            pd_mask = torch.logical_or(pd_mask, residual < 0)
+            pd_mask.logical_or_(residual < 0)
             detection_mask = torch.logical_and(detection_mask, pd_mask)
 
         # throw away spikes which cannot be subtracted
@@ -476,7 +477,7 @@ def subtract_chunk(
     subtracted_waveforms = torch.concatenate(subtracted_waveforms)
     spike_features = {
         k: torch.concatenate([ff[k] for ff in spike_features])
-        for k in spike_features[0].keys()
+        for k in spike_features[0]
     }
 
     # discard spikes in the margins and sort times_samples for caller
@@ -658,7 +659,8 @@ def threshold_chunk(
         if n_detect > max_spikes_per_chunk and not quiet:
             warnings.warn(
                 f"{n_detect} spikes in chunk was larger than "
-                f"{max_spikes_per_chunk=}. Keeping the top ones."
+                f"{max_spikes_per_chunk=}. Keeping the top ones.",
+                stacklevel=2,
             )
             energies = energies[valid]
             best = torch.argsort(energies)[-max_spikes_per_chunk:]

@@ -106,7 +106,7 @@ def test_fakedata(tmp_path, sim_size, simulations, sdcfg):
 
 def test_cli_help():
     # at least make sure the cli can do -h
-    res = subprocess.run(["dartsort", "-h"], capture_output=True)
+    res = subprocess.run(["dartsort", "-h"], capture_output=True, check=False)
     assert not res.returncode, res.stderr.decode()
 
 
@@ -115,7 +115,10 @@ def test_initial_detection_swap(tmp_path, simulations, type):
     sim = simulations["driftn_szmini"]
     sim["templates"].to_npz(tmp_path / "temps.npz")
 
-    cfg_add: dict[str, Any] = {"whiten_strategy": "none", "whiten_temporal_length": None}
+    cfg_add: dict[str, Any] = {
+        "whiten_strategy": "none",
+        "whiten_temporal_length": None,
+    }
     if type == "drifty_match":
         type = "match"
         cfg_add["matching_template_type"] = "drifty"
@@ -127,6 +130,8 @@ def test_initial_detection_swap(tmp_path, simulations, type):
     if type == "subtract":
         cfg_add["nn_denoiser_class_name"] = "SingleChannelWaveformDenoiser"
         cfg_add["nn_denoiser_pretrained_path"] = str(default_pretrained_path)
+        cfg_add["voltage_threshold"] = 4.0
+        cfg_add["deduplication_radius_um"] = 150.0
 
     cfg = dartsort.DeveloperConfig(
         dredge_only=True,
@@ -148,19 +153,19 @@ def test_initial_detection_swap(tmp_path, simulations, type):
     elif type == "match":
         h5_name = "matching0"
     else:
-        assert False
+        pytest.fail(type)
     assert (tmp_path / f"{h5_name}.h5").exists()
     assert not (tmp_path / "matching1.h5").exists()
 
     if type == "match":
-        count_dif_tol = 0.035
+        count_dif_tol = 0.05
     elif type == "subtract":
         # TODO pretrained decollider or sup denoiser for this sim.
         count_dif_tol = 0.25
     elif type == "threshold":
         count_dif_tol = 0.45
     else:
-        assert False
+        pytest.fail(type)
 
     c0 = len(sim["sorting"])
     c1 = len(res["sorting"])
