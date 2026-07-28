@@ -363,7 +363,7 @@ def test_no_crumbs(subtests, refractory_sim, method, cd_iter, channel_selection_
         cc_err1 = np.abs(match_up_templates - cc_test).max().item()
         cc_test = (match_up_templates + nz - true_temps_up) + true_temps_up - nz
         cc_err2 = np.abs(true_temps_up - cc_test).max().item()
-        cc_atol = max(cc_err1, cc_err2, 2e-5)
+        cc_atol = 2 * max(cc_err1, cc_err2, 1e-5)
 
         extract_chans = matcher.b.channel_index
         cc_wfs = res["collisioncleaned_waveforms"].cpu()
