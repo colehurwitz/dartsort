@@ -802,6 +802,10 @@ def _subtract_templates_loop(
     tt = times[:, None] + time_ix
     tt = tt.view(n * t)
 
+    if neg and scalings is not None:
+        scalings = -scalings
+        neg = False
+
     for i0 in range(0, n, batch_size):
         i1 = min(n, i0 + batch_size)
         nb = i1 - i0
