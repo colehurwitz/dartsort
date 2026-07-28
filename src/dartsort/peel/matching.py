@@ -350,7 +350,9 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
             chunk_template_data.obj_n_templates + 1, padded_obj_len
         )
         if self.p.refractory_radius_frames:
-            refrac_mask = torch.zeros_like(padded_objective)
+            refrac_mask = traces.new_zeros(
+                chunk_template_data.obj_n_templates + 1, padded_obj_len
+            )
         else:
             refrac_mask = None
 

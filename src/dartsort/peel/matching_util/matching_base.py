@@ -304,24 +304,20 @@ class ChunkTemplateData:
         exclude_extra_padding: int = 0,
         return_scalings=False,
     ) -> "MatchingPeaks":
-        # unscaled objective
+        peak_dt = 3
+        nu, nt = padded_conv.shape
         unscaled_obj = torch.add(
             self.obj_normsq[:, None]._neg_view(),
             padded_conv,
             alpha=2.0,
             out=padded_objective_buf[:-1],
         )
-        if refrac_mask is not None:
-            # TODO don't like this. what if scaled guy leaks through.
-            # maybe just delete all refractory logic...?
-            unscaled_obj.add_(refrac_mask[:-1])
 
         # propose peaks
         obj_max = unscaled_obj.amax(dim=0)
-        nt = obj_max.shape[0]
         mask = argrelmax_dedup_mask_no_thresh(
             x=obj_max,
-            dedup_radius=self.filter_length_samples,
+            dedup_radius=self.filter_length_samples + peak_dt,
             arange=obj_arange[:nt],
             padding=padding + exclude_extra_padding,
         )
@@ -330,7 +326,6 @@ class ChunkTemplateData:
         valid = peaks >= 0
 
         # scaled refinement
-        peak_dt = 5
         windows = peaks + torch.arange(-peak_dt, peak_dt + 1, device=peaks.device)
         windows.masked_fill_(valid.logical_not(), 0)
         windows_flat = windows.view(-1)
@@ -340,13 +335,13 @@ class ChunkTemplateData:
             window_scs = torch.empty_like(window_conv)
         else:
             window_scs = None
-        self.obj_from_conv_known_pos(conv=window_conv, out=window_objs, scalings_out=window_scs)
-        window_objs = window_objs.T.reshape(
-            windows.shape[0], windows.shape[1] * padded_conv.shape[0]
+        self.obj_from_conv_known_pos(
+            conv=window_conv, out=window_objs, scalings_out=window_scs
         )
+        window_objs = window_objs.T.reshape(windows.shape[0], windows.shape[1] * nu)
         best_val, best_ix = window_objs.max(dim=1)
-        best_shift = best_ix // padded_conv.shape[0]
-        best_unit = best_ix % padded_conv.shape[0]
+        best_shift = best_ix // nu
+        best_unit = best_ix % nu
 
         peaks = peaks.squeeze()
         times = peaks.add_(best_shift).sub_(peak_dt)
@@ -374,7 +369,7 @@ class ChunkTemplateData:
         if not return_scalings or window_scs is None:
             scalings = None
         else:
-            scalings = window_scs.view(padded_conv.shape[0], *windows.shape)[
+            scalings = window_scs.view(nu, *windows.shape)[
                 template_inds, keep, best_shift
             ]
 
@@ -711,15 +706,15 @@ def _subtract_precomputed_pconv_scaled(
 ):
     ix_time = times[:, None] + padded_conv_lags[None, :]
     scalings = scalings[None, :, None]
+    if neg:
+        scalings = -scalings
     for i0 in range(0, conv.shape[0], batch_size):
         i1 = min(conv.shape[0], i0 + batch_size)
         batch = pconv[i0:i1, template_indices, upsampling_indices]
         batch.mul_(scalings)
         ix = ix_time.broadcast_to(batch.shape)
         batch = batch.reshape(i1 - i0, -1)
-        ix = ix.reshape(i1 - i0, batch.shape[1])
-        if neg:
-            batch = batch._neg_view()
+        ix = ix.reshape(batch.shape)
         conv[i0:i1].scatter_add_(dim=1, src=batch, index=ix)
 
 
@@ -758,6 +753,7 @@ def _scaled_coarse_objective(
     torch.addcmul(-inv_lambda, -a, out, out=out)
     out.addcmul_(scalings, b, value=2.0)
     return out
+
 
 @torch_compiler()
 def _scaled_coarse_objective_known_pos(
