@@ -231,23 +231,9 @@ class CompressedUpsampledMatchingTemplates(MatchingTemplates):
         normsq_chan = padded_spatial_sing.square().sum(dim=1)
         main_channels = normsq_chan.argmax(dim=1)
         normsq = normsq_chan.sum(dim=1)
-
-        if self.drifting and self.coarse_objective:
-            obj_shifts, obj_spatial_sing = templates_at_time(
-                t_s=t_s,
-                registered_templates=self.b.spatial_sing,
-                registered_template_depths_um=self.registered_template_depths_um,
-                motion=self.motion,
-                return_pitch_shifts=True,
-                return_padded=False,
-            )
-            obj_shifts = torch.asarray(shifts, device=self.device)
-            obj_spatial_sing = torch.asarray(obj_spatial_sing, device=self.device)
-            obj_normsq = obj_spatial_sing.square().sum(dim=(1, 2))
-        else:
-            obj_shifts = shifts
-            obj_spatial_sing = padded_spatial_sing[..., :-1]
-            obj_normsq = normsq
+        obj_spatial_sing = padded_spatial_sing[..., :-1]
+        obj_normsq_plus_inv_lambda = normsq[:, None] + inv_lambda
+        inv_obj_normsq_plus_inv_lambda = obj_normsq_plus_inv_lambda.reciprocal()
 
         return CompressedUpsampledChunkTemplateData(
             resid_offset=resid_offset,
@@ -264,7 +250,9 @@ class CompressedUpsampledMatchingTemplates(MatchingTemplates):
             inv_lambda=torch.tensor(inv_lambda, device=normsq.device),
             scale_min=torch.tensor(scale_min, device=normsq.device),
             scale_max=torch.tensor(scale_max, device=normsq.device),
-            obj_normsq=obj_normsq,
+            obj_normsq=normsq,
+            obj_normsq_plus_inv_lambda=obj_normsq_plus_inv_lambda,
+            inv_obj_normsq_plus_inv_lambda=inv_obj_normsq_plus_inv_lambda,
             obj_temporal_comps=self.b.obj_temporal_comps,
             obj_spatial_sing=obj_spatial_sing,
             temporal_comps=self.b.temporal_comps,
@@ -283,7 +271,7 @@ class CompressedUpsampledMatchingTemplates(MatchingTemplates):
             chan_ix=self.b.chan_ix,
             pconv_db=self.pconv_db,
             shifts_a=shifts,
-            shifts_b=obj_shifts,
+            shifts_b=shifts,
         )
 
 
@@ -306,6 +294,8 @@ class CompressedUpsampledChunkTemplateData(ChunkTemplateData):
 
     # objective props
     obj_normsq: Tensor
+    obj_normsq_plus_inv_lambda: Tensor
+    inv_obj_normsq_plus_inv_lambda: Tensor
     obj_temporal_comps: Tensor
     obj_spatial_sing: Tensor
     temporal_comps: Tensor

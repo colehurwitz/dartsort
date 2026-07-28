@@ -369,7 +369,6 @@ def test_matching_alignment_basic(align_sim, align_templates, matchtype):
             sampling_cfg=no_resid_sampling_cfg,
             featurization_cfg=dartsort.FeaturizationConfig(skip=True),
             matching_cfg=dartsort.MatchingConfig(
-                refractory_radius_frames=1,
                 up_factor=1,
                 template_type=matchtype,
                 up_method="keys4" if matchtype == "drifty" else "direct",
@@ -406,7 +405,7 @@ def match_test_sims():
             tshape -= tshape.min()
             assert tt.shape == tshape.shape == (121,)
         else:
-            assert False
+            pytest.fail(tempkind)
 
         assert tshape.argmax() == trough_offset
         # again, we'll create positive and negative versions

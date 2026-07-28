@@ -394,6 +394,9 @@ class DebugMatchingTemplates(MatchingTemplates):
         resid_offset: int = 0,
     ) -> ChunkTemplateData:
         assert not resid_offset
+        normsq = self.b.templates_up[:, 0].square().sum(dim=(1, 2))
+        obj_normsq_plus_inv_lambda = normsq[:, None] + inv_lambda
+        inv_obj_normsq_plus_inv_lambda = obj_normsq_plus_inv_lambda.reciprocal()
         return DebugChunkTemplateData(
             spike_length_samples=self.b.templates_up.shape[2],
             filter_length_samples=self.b.templates_up.shape[2],
@@ -403,7 +406,9 @@ class DebugMatchingTemplates(MatchingTemplates):
             ),
             main_channels=self.b.main_channels,
             templates_up=self.b.templates_up,
-            obj_normsq=self.b.templates_up[:, 0].square().sum(dim=(1, 2)),
+            obj_normsq=normsq,
+            obj_normsq_plus_inv_lambda=obj_normsq_plus_inv_lambda,
+            inv_obj_normsq_plus_inv_lambda=inv_obj_normsq_plus_inv_lambda,
             normsq_up=self.b.templates_up.square().sum(dim=(2, 3)),
             obj_n_templates=self.b.templates_up.shape[0],
             pconv=self.b.pconv,
@@ -427,6 +432,8 @@ class DebugChunkTemplateData(ChunkTemplateData):
     unit_ids: Tensor
     main_channels: Tensor
     obj_normsq: Tensor
+    obj_normsq_plus_inv_lambda: Tensor
+    inv_obj_normsq_plus_inv_lambda: Tensor
     normsq_up: Tensor
     obj_n_templates: int
     templates_up: Tensor

@@ -626,8 +626,6 @@ def test_static(tmp_path, up_factor, cd_iter):
             threshold=0.01,
             up_factor=up_factor,
             amplitude_scaling_variance=0.0,
-            coarse_approx_error_threshold=0.0,
-            conv_ignore_threshold=0.0,
             template_svd_compression_rank=2,
             cd_iter=cd_iter,
             chunk_length_samples=recording_length_samples,
