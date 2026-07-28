@@ -483,19 +483,17 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
             obj_arange=self.b.obj_arange,
             exclude_extra_padding=self.whiten_pad // 2,
             padding=self.obj_pad_len,
-            return_scalings=coarse_only,
+            return_scalings=coarse_only or not self.is_upsampling,
             peak_dt=self.p.peak_dt,
         )
         if coarse_only or not coarse_peaks.n_spikes:
             return coarse_peaks
-
-        fine_peaks = chunk_template_data.fine_match(
+        return chunk_template_data.fine_match(
             peaks=coarse_peaks,
             residual=residual,
             conv=padded_conv,
             padding=self.obj_pad_len,
         )
-        return fine_peaks
 
 
 def peaks_to_batch_result(

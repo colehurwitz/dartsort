@@ -580,6 +580,19 @@ class MatchingPeaks:
             time_shifts=_cat_or_none([p.time_shifts for p in peaks]),
         )
 
+    def __str__(self):
+        dsets = ""
+        if self.times is not None:
+            dsets += "times,"
+        if self.up_inds is not None:
+            dsets += "up_inds,"
+        if self.scalings is not None:
+            dsets += "scalings,"
+        if self.scores is not None:
+            dsets += "scores,"
+        dsets = dsets.removesuffix(",")
+        return f"{self.__class__.__name__}(n_spikes={self.n_spikes},{dsets})"
+
 
 def _mask_or_none(x: Tensor | None, mask: Tensor) -> Tensor | None:
     if x is None:
