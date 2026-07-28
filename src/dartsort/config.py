@@ -296,7 +296,6 @@ class DeveloperConfig(DARTsortUserConfig):
     whiten_estimator: WhiteningEstimator = "localzca"
     whiten_temporal_length: int | None = 3
     whiten_features: bool = False
-    matching_fp_control: bool = False
     svd_alignment_iterations: int = 0
 
     # interpolation for features

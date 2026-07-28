@@ -49,7 +49,6 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
         matching_templates_builder: MatchingTemplatesBuilder | None = None,
         p: MatchingConfig = default_matching_cfg,
         waveform_cfg: WaveformConfig = default_waveform_cfg,
-        fpctrl_spike_counts=None,
         fit_sampling_cfg: FitSamplingConfig = default_peeling_fit_sampling_cfg,
         *,
         save_collidedness=False,
@@ -83,12 +82,11 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
         self.p: MatchingConfig = p
         self.matching_templates = matching_templates
         self.matching_templates_builder = matching_templates_builder
-        self.thresholdsq: float | None = None  # set in precompute
+        self.thresholdsq: float = self.p.threshold * self.p.threshold
         self.save_collidedness = save_collidedness
         self.whiten_features = whiten_features
 
         # fp control threshold stuff (TODO: remove?)
-        self.fpctrl_spike_counts = fpctrl_spike_counts
         self.parent_sorting_hdf5_path = parent_sorting_hdf5_path
 
         geom = recording.get_channel_locations()
@@ -123,7 +121,7 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
         self.register_buffer("obj_arange", torch.arange(conv_len))
 
     def peeling_needs_precompute(self):
-        return self.matching_templates is None or self.thresholdsq is None
+        return self.matching_templates is None
 
     def precompute_peeling_data(
         self,
@@ -136,7 +134,6 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
             self.matching_templates = self.matching_templates_builder.build(
                 save_folder, computation_cfg=computation_cfg, overwrite=overwrite
             )
-        self.pick_threshold()
 
     def out_datasets(self):
         datasets = super().out_datasets()
@@ -249,9 +246,6 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
             save_collidedness=save_collidedness,
             whiten_features=matching_cfg.whiten_features,
             whiten_kernel_length=whiten_kernel_length,
-            fpctrl_spike_counts=template_data.spike_counts
-            if matching_cfg.threshold == "fp_control"
-            else None,
         )
 
     def peel_chunk(
@@ -491,7 +485,6 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
         # )
 
         # # find peaks in the coarse objective
-        # assert self.thresholdsq is not None
         # coarse_peaks = chunk_template_data.coarse_match(
         #     objective=objective,
         #     scalings=padded_scalings,
@@ -500,7 +493,6 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
         #     padding=self.obj_pad_len,
         # )
 
-        assert self.thresholdsq is not None
         coarse_peaks = chunk_template_data.quick_match(
             padded_conv=padded_conv,
             padded_objective_buf=padded_objective,
@@ -523,69 +515,6 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
         )
 
         return fine_peaks
-
-    def pick_threshold(self):
-        from scipy.stats import norm
-
-        # TODO: remove?
-        if (
-            self.is_scaling
-            and self.p.scale_adjusts_threshold
-            and self.p.amplitude_scaling_variance < torch.inf
-        ):
-            # adjust threshold by the scaling prior's constant term
-            # nb, everything is x2 so halves are gone.
-            scstd = np.sqrt(self.p.amplitude_scaling_variance)
-            norm_const = -(np.log(2.0) + np.log(np.pi) + 2.0 * np.log(scstd))
-
-            # adjust by boundary
-            nm = norm(loc=1.0, scale=scstd)
-            p_up = nm.cdf(self.amp_scale_max)
-            p_lo = nm.cdf(self.amp_scale_min)
-            Z = p_up - p_lo
-
-            # renormalize
-            scale_const = norm_const - 2.0 * np.log(Z)
-
-            if isinstance(self.p.threshold, float):
-                tb = np.sqrt(max(0.0, self.p.threshold**2 - scale_const))
-                _msg = f"In norm units, that's from {self.p.threshold:0.2f}->{tb:0.2f}"
-            else:
-                _msg = ""
-            logger.dartsortdebug(
-                f"matching: Amplitude scaling with std {scstd:0.4f} adjusts "
-                f"theshold by {scale_const:0.4f} in squared units. {_msg}"
-            )
-        else:
-            scale_const = 0.0
-
-        if isinstance(self.p.threshold, float):
-            self.thresholdsq = self.p.threshold**2 - scale_const
-            return
-
-        assert self.p.threshold == "fp_control"
-        from ..util import noise_util
-
-        # fit noise to residuals from the previous detection step
-        assert self.parent_sorting_hdf5_path is not None
-        assert self.matching_templates is not None
-        lrt = cast(LowRankTemplates, self.matching_templates.obj_lrts)
-        self.thresholdsq = noise_util.fp_control_threshold_from_h5(
-            hdf5_path=self.parent_sorting_hdf5_path,
-            low_rank_templates=lrt.shift_to_best_channels(
-                self.recording.get_channel_locations(), self.matching_templates.rgeom
-            ),
-            rg=self.fit_subsampling_random_state,
-            num_frames=self.recording.get_num_samples(),  # TODO: wrong in subsampled case.
-            max_fp_per_input_spike=self.p.max_fp_per_input_spike,
-            unit_ids=self.matching_templates.obj_unit_ids,
-            spike_counts=self.fpctrl_spike_counts,
-        )
-        assert isinstance(self.thresholdsq, float)
-        self.thresholdsq -= scale_const
-        logger.info(
-            f"Matcher picked threshold^2 {self.thresholdsq} for strategy fp_control."
-        )
 
 
 def peaks_to_batch_result(
