@@ -802,9 +802,7 @@ def _subtract_templates_loop(
     tt = times[:, None] + time_ix
     tt = tt.view(n * t)
 
-    if neg and scalings is not None:
-        scalings = -scalings
-        neg = False
+    alpha = -1 if neg else 1
 
     for i0 in range(0, n, batch_size):
         i1 = min(n, i0 + batch_size)
@@ -823,12 +821,10 @@ def _subtract_templates_loop(
                 btempc.mul_(scalings[i0:i1, None, None])
 
         btemp = torch.bmm(btempc, spatc[template_inds[i0:i1]], out=btemp)
-        if neg:
-            btemp = btemp._neg_view()
 
         btemp_flat = btemp.view(nb * t, c)
-        btt = tt[i0 * t : i1 * t, None].broadcast_to(btemp_flat.shape)
-        traces.scatter_add_(dim=0, src=btemp_flat, index=btt)
+        btt = tt[i0 * t : i1 * t].view(nb * t)
+        traces.index_add_(dim=0, source=btemp_flat, index=btt, alpha=alpha)
 
 
 # -- Keys' piecewise cubic interpolation impl (order 3 and 4)
