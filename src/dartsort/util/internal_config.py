@@ -793,6 +793,7 @@ class MatchingConfig:
     whitening: WhiteningConfig = WhiteningConfig(strategy="prewhiten_postapply")
     whiten_features: bool = False
     margin_factor: int = 2
+    peak_dt: int = 3
 
     # template postprocessing parameters
     min_template_ptp: float = 1.0

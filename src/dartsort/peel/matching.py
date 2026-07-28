@@ -172,7 +172,11 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
         motion: MotionInfo | None = None,
         parent_sorting_hdf5_path=None,
     ) -> Self:
-        geom = torch.tensor(recording.get_channel_locations())
+        if motion is not None:
+            geom = torch.asarray(motion.geom)
+        else:
+            geom = torch.tensor(recording.get_channel_locations())
+            motion = MotionInfo.from_motion_est(geom=geom.numpy())
         channel_index = make_channel_index(
             geom, featurization_cfg.extract_radius, to_torch=True
         )
@@ -198,9 +202,6 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
             whiten_kernel_length = 0
         else:
             whiten_kernel_length = template_data.temporal_kernel.shape[0]
-
-        if motion is None:
-            motion = MotionInfo.from_motion_est(geom=geom.numpy())
 
         nofeat = featurization_cfg.skip or featurization_cfg.denoise_only
         do_tpca = featurization_cfg.save_input_tpca_projs and not nofeat
@@ -333,8 +334,6 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
         padded_conv = traces.new_zeros(
             chunk_template_data.obj_n_templates, padded_obj_len
         )
-        # padded_scalings = padded_conv.clone() if self.is_scaling else None
-        padded_scalings = None
         padded_objective = traces.new_zeros(
             chunk_template_data.obj_n_templates + 1, padded_obj_len
         )
@@ -376,7 +375,6 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
                 new_peaks = self.find_peaks(
                     residual=residual,
                     padded_conv=padded_conv,
-                    padded_scalings=padded_scalings,
                     padded_objective=padded_objective,
                     chunk_template_data=chunk_template_data,
                     coarse_only=coarse_only,
@@ -475,45 +473,28 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
         residual: Tensor,
         padded_conv: Tensor,
         padded_objective: Tensor,
-        padded_scalings: Tensor | None,
         chunk_template_data: ChunkTemplateData,
         coarse_only=False,
     ):
-        # # update the coarse objective
-        # chunk_template_data.obj_from_conv(
-        #     conv=padded_conv, out=padded_objective[:-1], scalings_out=padded_scalings
-        # )
-
-        # # find peaks in the coarse objective
-        # coarse_peaks = chunk_template_data.coarse_match(
-        #     objective=objective,
-        #     scalings=padded_scalings,
-        #     thresholdsq=self.thresholdsq,
-        #     obj_arange=self.b.obj_arange,
-        #     padding=self.obj_pad_len,
-        # )
-
         coarse_peaks = chunk_template_data.quick_match(
             padded_conv=padded_conv,
             padded_objective_buf=padded_objective,
-            padded_scaling_buf=padded_scalings,
             thresholdsq=self.thresholdsq,
             obj_arange=self.b.obj_arange,
             exclude_extra_padding=self.whiten_pad // 2,
             padding=self.obj_pad_len,
             return_scalings=coarse_only,
+            peak_dt=self.p.peak_dt,
         )
         if coarse_only or not coarse_peaks.n_spikes:
             return coarse_peaks
 
-        # high-res peaks (upsampled or grouped)
         fine_peaks = chunk_template_data.fine_match(
             peaks=coarse_peaks,
             residual=residual,
             conv=padded_conv,
             padding=self.obj_pad_len,
         )
-
         return fine_peaks
 
 

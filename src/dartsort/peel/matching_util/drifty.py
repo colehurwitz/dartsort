@@ -559,7 +559,6 @@ class DriftyChunkTemplateData(ChunkTemplateData):
         extract_shift = self.up_data.up_extract_shift[up_best]
         return MatchingPeaks(
             times=peaks.times + subtract_shift,
-            obj_template_inds=peaks.obj_template_inds,
             template_inds=peaks.template_inds,
             up_inds=up_inds,
             scalings=scalings,

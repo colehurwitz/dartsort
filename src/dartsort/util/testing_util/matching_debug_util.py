@@ -579,7 +579,6 @@ class DebugChunkTemplateData(ChunkTemplateData):
 
         return MatchingPeaks(
             times=times,
-            obj_template_inds=peaks.obj_template_inds,
             template_inds=template_inds,
             scalings=scalings,
             up_inds=up_inds,

@@ -444,7 +444,6 @@ class CompressedUpsampledChunkTemplateData(ChunkTemplateData):
         if not self.upsampling:
             return MatchingPeaks(
                 times=peaks.times,
-                obj_template_inds=peaks.obj_template_inds,
                 template_inds=template_inds,
                 scalings=peaks.scalings,
                 scores=objs,
@@ -506,7 +505,6 @@ class CompressedUpsampledChunkTemplateData(ChunkTemplateData):
         time_shifts = (up_inds > up_half).long().neg_()
         return MatchingPeaks(
             times=times,
-            obj_template_inds=peaks.obj_template_inds,
             template_inds=template_inds,
             up_inds=up_inds,
             scalings=scalings,
