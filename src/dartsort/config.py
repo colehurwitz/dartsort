@@ -297,7 +297,6 @@ class DeveloperConfig(DARTsortUserConfig):
     whiten_temporal_length: int | None = 3
     whiten_features: bool = False
     matching_fp_control: bool = False
-    refractory_radius_frames: int = 0
     svd_alignment_iterations: int = 0
 
     # interpolation for features

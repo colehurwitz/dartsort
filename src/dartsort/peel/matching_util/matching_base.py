@@ -146,8 +146,9 @@ class ChunkTemplateData:
     main_channels: Tensor
     # for obj templates
     obj_normsq: Tensor
+    obj_normsq_plus_inv_lambda: Tensor
+    inv_obj_normsq_plus_inv_lambda: Tensor
     obj_n_templates: int
-    coarse_objective: bool
     upsampling: bool
     scaling: bool
     free_scaling: bool
@@ -181,11 +182,6 @@ class ChunkTemplateData:
     ):
         raise NotImplementedError
 
-    def _enforce_refractory(
-        self, mask: Tensor, peaks: "MatchingPeaks", offset: int = 0, value=-torch.inf
-    ):
-        raise NotImplementedError
-
     def fine_match(
         self,
         *,
@@ -208,16 +204,6 @@ class ChunkTemplateData:
         raise NotImplementedError
 
     # -- super handles below
-
-    def enforce_refractory(self, mask, peaks, offset=0):
-        if not peaks.n_spikes:
-            return
-        self._enforce_refractory(mask, peaks, offset=offset, value=-torch.inf)
-
-    def forget_refractory(self, mask, peaks, offset=0):
-        if not peaks.n_spikes:
-            return
-        self._enforce_refractory(mask, peaks, offset=offset, value=0.0)
 
     def unsubtract(self, traces: Tensor, peaks: "MatchingPeaks"):
         return self.subtract(traces, peaks, sign=1)
@@ -248,7 +234,8 @@ class ChunkTemplateData:
             assert scalings_out is not None
             return _scaled_coarse_objective(
                 conv=conv,
-                normsq=self.obj_normsq,
+                term_a=self.obj_normsq_plus_inv_lambda,
+                inv_term_a=self.inv_obj_normsq_plus_inv_lambda,
                 out=out,
                 scalings=scalings_out,
                 inv_lambda=self.inv_lambda,
@@ -279,7 +266,9 @@ class ChunkTemplateData:
             assert scalings_out is not None
             return _scaled_coarse_objective_known_pos(
                 conv=conv,
-                normsq=self.obj_normsq,
+                # normsq=self.obj_normsq,
+                term_a=self.obj_normsq_plus_inv_lambda,
+                inv_term_a=self.inv_obj_normsq_plus_inv_lambda,
                 out=out,
                 scalings=scalings_out,
                 inv_lambda=self.inv_lambda,
@@ -296,7 +285,6 @@ class ChunkTemplateData:
         *,
         padded_conv: Tensor,
         padded_objective_buf: Tensor,
-        refrac_mask: Tensor | None,
         padded_scaling_buf: Tensor | None,
         thresholdsq: float,
         obj_arange: Tensor,
@@ -733,7 +721,8 @@ def _free_coarse_objective(
 @torch_compiler()
 def _scaled_coarse_objective(
     conv: Tensor,
-    normsq: Tensor,
+    term_a: Tensor,
+    inv_term_a: Tensor,
     out: Tensor,
     scalings: Tensor,
     inv_lambda: Tensor,
@@ -742,13 +731,13 @@ def _scaled_coarse_objective(
 ) -> Tensor:
     neg = conv < 0
     b = conv + inv_lambda
-    a = normsq[:, None] + inv_lambda
-    torch.divide(b, a, out=scalings)
+    # a = normsq[:, None] + inv_lambda
+    torch.mul(b, inv_term_a, out=scalings)
     scalings.clamp_(min=scale_min, max=scale_max)
     scalings.masked_fill_(neg, 0.0)
     # this is 2 * sc * b - sc**2 * a - inv_lambda
     torch.square(scalings, out=out)
-    torch.addcmul(-inv_lambda, -a, out, out=out)
+    torch.addcmul(-inv_lambda, term_a, out, value=-1, out=out)
     out.addcmul_(scalings, b, value=2.0)
     return out
 
@@ -756,7 +745,8 @@ def _scaled_coarse_objective(
 @torch_compiler()
 def _scaled_coarse_objective_known_pos(
     conv: Tensor,
-    normsq: Tensor,
+    term_a: Tensor,
+    inv_term_a: Tensor,
     out: Tensor,
     scalings: Tensor,
     inv_lambda: Tensor,
@@ -764,11 +754,11 @@ def _scaled_coarse_objective_known_pos(
     scale_max: Tensor,
 ) -> Tensor:
     b = conv + inv_lambda
-    a = normsq[:, None] + inv_lambda
-    torch.divide(b, a, out=scalings)
+    # a = normsq[:, None] + inv_lambda
+    torch.mul(b, inv_term_a, out=scalings)
     scalings.clamp_(min=scale_min, max=scale_max)
     # this is 2 * sc * b - sc**2 * a - inv_lambda
     torch.square(scalings, out=out)
-    torch.addcmul(inv_lambda._neg_view(), a._neg_view(), out, out=out)
+    torch.addcmul(inv_lambda._neg_view(), term_a, out, value=-1, out=out)
     out.addcmul_(scalings, b, value=2.0)
     return out

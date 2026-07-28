@@ -779,13 +779,11 @@ class MatchingConfig:
     up_factor: int = 4
     upsampling_radius: int = 8
     template_min_channel_amplitude: float = 1.0
-    refractory_radius_frames: int = 0
     amplitude_scaling_variance: float = 0.01**2
     amplitude_scaling_boundary: float = 1.0 / 3.0
     max_iter: int = 100
     conv_ignore_threshold: float = 0.0
     coarse_approx_error_threshold: float = 0.0
-    coarse_objective: bool = True
     channel_selection: Literal["template", "amplitude"] = "template"
     channel_selection_radius: float | None = None
     template_type: Literal["individual_compressed_upsampled", "drifty", "debug"] = (
@@ -1133,7 +1131,6 @@ def to_internal_config(cfg, n_channels: int) -> DARTsortInternalConfig:
             template_type=cfg.matching_template_type,
             up_method=cfg.matching_up_method,
             template_min_channel_amplitude=cfg.matching_template_min_amplitude,
-            refractory_radius_frames=cfg.refractory_radius_frames,
             template_svd_compression_rank=cfg.matching_svd_rank,
             whitening=WhiteningConfig(),  # we don't know how to whiten yet
         )
@@ -1301,7 +1298,6 @@ def to_internal_config(cfg, n_channels: int) -> DARTsortInternalConfig:
         ),
         template_svd_compression_rank=cfg.matching_svd_rank,
         drift_interp_params=match_interp_params,
-        refractory_radius_frames=cfg.refractory_radius_frames,
     )
     computation_cfg = ComputationConfig(
         n_jobs_cpu=cfg.n_jobs_cpu,

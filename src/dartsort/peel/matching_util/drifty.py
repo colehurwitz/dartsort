@@ -5,7 +5,6 @@ Features
  - Amplitude scaling
  - Temporal upsampling
     - No YASS-style adaptive temporal compression, which adds overhead
- - No mutually-refractory group support yet (TODO if needed)
  - Pick your favorite interpolation strategy for drift handling. If it's not
    thin plate splines, then maybe you haven't heard of 'em?
 
@@ -91,7 +90,6 @@ class DriftyMatchingTemplates(MatchingTemplates):
         interp_up_radius: int = 8,
         up_interp_params: InterpolationParams = default_upsampling_params,
         drift_interp_params: InterpolationParams = tps_interp_clampna_extrap_params,
-        refractory_radius_frames: int = 0,
         device: torch.device,
     ):
         """
@@ -204,12 +202,10 @@ class DriftyMatchingTemplates(MatchingTemplates):
 
         # indexing helpers
         t = self.spike_length_samples
-        rr = refractory_radius_frames
         if self.whitener is not None:
             ct = t + max(0, self.whitener.temporal_length - 1)
         else:
             ct = t
-        self.register_buffer("refrac_ix", torch.arange(-rr, rr + 1, device=device))
         self.register_buffer("time_ix", torch.arange(ct, device=device))
         self.register_buffer("sub_time_ix", torch.arange(t, device=device))
         self.register_buffer("chan_ix", torch.arange(n_channels, device=device))
@@ -275,7 +271,6 @@ class DriftyMatchingTemplates(MatchingTemplates):
             up_method=matching_cfg.up_method,
             interp_up_radius=matching_cfg.upsampling_radius,
             drift_interp_params=matching_cfg.drift_interp_params,
-            refractory_radius_frames=matching_cfg.refractory_radius_frames,
             whitener=whitener,
             whiten_strategy=matching_cfg.whitening.strategy,
             whiten_features=matching_cfg.whiten_features,
@@ -354,6 +349,8 @@ class DriftyMatchingTemplates(MatchingTemplates):
         spatial_sing, normsq, main_channels, padded_spatial_sing, pconv = (
             self.spatial_at_time(t_s=t_s)
         )
+        obj_normsq_plus_inv_lambda = normsq[:, None] + inv_lambda
+        inv_obj_normsq_plus_inv_lambda = obj_normsq_plus_inv_lambda.reciprocal()
         return DriftyChunkTemplateData(
             spike_length_samples=self.spike_length_samples,
             filter_length_samples=self.b.conv_temporal_comps.shape[1],
@@ -361,6 +358,8 @@ class DriftyMatchingTemplates(MatchingTemplates):
             unit_ids=self.b.unit_ids,
             main_channels=main_channels,
             obj_normsq=normsq,
+            obj_normsq_plus_inv_lambda=obj_normsq_plus_inv_lambda,
+            inv_obj_normsq_plus_inv_lambda=inv_obj_normsq_plus_inv_lambda,
             obj_n_templates=self.n_units,
             scaling=scaling,
             free_scaling=free_scaling,
@@ -381,7 +380,6 @@ class DriftyMatchingTemplates(MatchingTemplates):
             chan_ix=self.b.chan_ix,
             rank_ix=self.b.rank_ix,
             conv_lags=self.b.conv_lags,
-            refrac_ix=self.b.refrac_ix,
             padded_spatial_sing=padded_spatial_sing,
             up_data=self.up_data,
         )
@@ -397,6 +395,8 @@ class DriftyChunkTemplateData(ChunkTemplateData):
     main_channels: Tensor
     # for obj templates
     obj_normsq: Tensor
+    obj_normsq_plus_inv_lambda: Tensor
+    inv_obj_normsq_plus_inv_lambda: Tensor
     obj_n_templates: int
     upsampling: bool
     scaling: bool
@@ -419,12 +419,8 @@ class DriftyChunkTemplateData(ChunkTemplateData):
     sub_time_ix: Tensor
     chan_ix: Tensor
     rank_ix: Tensor
-    refrac_ix: Tensor
     conv_lags: Tensor
     up_data: "UpsamplingData | None"
-
-    # template grouping is not implemented, so this is always false.
-    coarse_objective: bool = False
 
     def convolve(self, traces: Tensor, padding: int = 0, out: Tensor | None = None):
         """
@@ -523,14 +519,6 @@ class DriftyChunkTemplateData(ChunkTemplateData):
         else:
             return add_into.baddbmm_(tempc.mT, spatial)
 
-    def _enforce_refractory(self, mask, peaks, offset=0, value=-torch.inf):
-        if not peaks.n_spikes:
-            return
-        assert peaks.times is not None
-        assert peaks.obj_template_inds is not None
-        time_ix = peaks.times[:, None] + (self.refrac_ix[None, :] + offset)
-        row_ix = peaks.obj_template_inds[:, None]
-        mask[row_ix, time_ix] = value
 
     def fine_match(
         self,

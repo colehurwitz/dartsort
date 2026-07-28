@@ -234,7 +234,10 @@ def visualize_step_results(
         axes = panel.subplots(nrows=6, sharex=True)
 
         for x, ax, name in zip(
-            (chunk, resid, chunk - resid), axes, ("chunk", "resid", "signal"), strict=True
+            (chunk, resid, chunk - resid),
+            axes,
+            ("chunk", "resid", "signal"),
+            strict=True,
         ):
             if chunk_vis_style == "im":
                 ax.imshow(
@@ -336,7 +339,7 @@ class DebugMatchingTemplates(MatchingTemplates):
 
     template_type = "debug"
 
-    def __init__(self, templates_up: Tensor, refrac_radius: int):
+    def __init__(self, templates_up: Tensor):
         super().__init__()
         self.register_buffer("templates_up", templates_up)
         pconv = reference_pairwise_convolution(
@@ -345,11 +348,9 @@ class DebugMatchingTemplates(MatchingTemplates):
         )
         pconv = torch.asarray(pconv, device=templates_up.device)
         self.register_buffer("pconv", pconv)
-        refrac_ix = torch.arange(-refrac_radius, refrac_radius + 1, device=pconv.device)
         conv_lags = torch.arange(
             -templates_up.shape[2] + 1, templates_up.shape[2], device=pconv.device
         )
-        self.register_buffer("refrac_ix", refrac_ix)
         self.register_buffer("conv_lags", conv_lags)
         main_channels = templates_up[:, 0].square().sum(dim=1).argmax(dim=1)
         self.register_buffer("main_channels", main_channels)
@@ -379,10 +380,7 @@ class DebugMatchingTemplates(MatchingTemplates):
         assert templates_up.shape[3] == recording.get_num_channels()
         assert template_data.templates.shape[2] == recording.get_num_channels()
         templates_up = torch.asarray(templates_up, device=device, dtype=dtype)
-        return cls(
-            templates_up=templates_up,
-            refrac_radius=matching_cfg.refractory_radius_frames,
-        )
+        return cls(templates_up=templates_up)
 
     def data_at_time(
         self,
@@ -409,7 +407,6 @@ class DebugMatchingTemplates(MatchingTemplates):
             normsq_up=self.b.templates_up.square().sum(dim=(2, 3)),
             obj_n_templates=self.b.templates_up.shape[0],
             pconv=self.b.pconv,
-            refrac_ix=self.b.refrac_ix,
             conv_lags=self.b.conv_lags,
             inv_lambda=torch.asarray(inv_lambda, device=self.b.pconv.device),
             scale_min=torch.asarray(scale_min, device=self.b.pconv.device),
@@ -435,7 +432,6 @@ class DebugChunkTemplateData(ChunkTemplateData):
     templates_up: Tensor
     pconv: Tensor
     conv_lags: Tensor
-    refrac_ix: Tensor
     inv_lambda: Tensor
     scale_min: Tensor
     scale_max: Tensor
@@ -522,17 +518,6 @@ class DebugChunkTemplateData(ChunkTemplateData):
             return wfs
         else:
             return add_into.add_(wfs)
-
-    def _enforce_refractory(
-        self, mask: Tensor, peaks: MatchingPeaks, offset: int = 0, value=-torch.inf
-    ):
-        if not peaks.n_spikes:
-            return
-        assert peaks.times is not None
-        assert peaks.obj_template_inds is not None
-        time_ix = peaks.times[:, None] + (self.refrac_ix[None, :] + offset)
-        row_ix = peaks.obj_template_inds[:, None]
-        mask[row_ix, time_ix] = value
 
     def fine_match(
         self,
