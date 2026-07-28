@@ -132,7 +132,7 @@ def detect_and_deduplicate(
         del peak
 
         if detection_mask is not None:
-            detect.logical_and_(detection_mask[i00:i11].T)
+            detect = detect.logical_and_(detection_mask[i00:i11].T)
 
         # check if deduping
         if not will_dedup:

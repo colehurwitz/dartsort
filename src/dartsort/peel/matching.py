@@ -518,26 +518,39 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
         unit_mask=None,
         coarse_only=False,
     ):
-        # update the coarse objective
-        chunk_template_data.obj_from_conv(
-            conv=padded_conv, out=padded_objective[:-1], scalings_out=padded_scalings
-        )
+        # # update the coarse objective
+        # chunk_template_data.obj_from_conv(
+        #     conv=padded_conv, out=padded_objective[:-1], scalings_out=padded_scalings
+        # )
 
-        # enforce refractoriness
-        objective = padded_objective[:-1]
-        if refrac_mask is not None:
-            objective = objective + refrac_mask[:-1]
-        if unit_mask is not None:
-            objective[torch.logical_not(unit_mask)] = -torch.inf
+        # # enforce refractoriness
+        # objective = padded_objective[:-1]
+        # if refrac_mask is not None:
+        #     objective = objective + refrac_mask[:-1]
+        # if unit_mask is not None:
+        #     objective[torch.logical_not(unit_mask)] = -torch.inf
 
-        # find peaks in the coarse objective
+        # # find peaks in the coarse objective
+        # assert self.thresholdsq is not None
+        # coarse_peaks = chunk_template_data.coarse_match(
+        #     objective=objective,
+        #     scalings=padded_scalings,
+        #     thresholdsq=self.thresholdsq,
+        #     obj_arange=self.b.obj_arange,
+        #     padding=self.obj_pad_len,
+        # )
+
         assert self.thresholdsq is not None
-        coarse_peaks = chunk_template_data.coarse_match(
-            objective=objective,
-            scalings=padded_scalings,
+        coarse_peaks = chunk_template_data.quick_match(
+            padded_conv=padded_conv,
+            padded_objective_buf=padded_objective,
+            refrac_mask=refrac_mask,
+            padded_scaling_buf=padded_scalings,
             thresholdsq=self.thresholdsq,
             obj_arange=self.b.obj_arange,
+            exclude_extra_padding=self.whiten_pad // 2,
             padding=self.obj_pad_len,
+            return_scalings=coarse_only,
         )
         if coarse_only or not coarse_peaks.n_spikes:
             return coarse_peaks

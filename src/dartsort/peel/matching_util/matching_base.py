@@ -1,3 +1,4 @@
+from math import ceil
 from pathlib import Path
 from typing import Literal, Self, cast
 
@@ -11,7 +12,12 @@ from ...util.internal_config import ComputationConfig, MatchingConfig
 from ...util.logging_util import DARTSORTVERBOSE, get_logger
 from ...util.motion import MotionInfo
 from ...util.py_util import databag, panic
-from ...util.spiketorch import argrelmax_dedup, grab_spikes, ptp
+from ...util.spiketorch import (
+    argrelmax_dedup,
+    argrelmax_dedup_mask_no_thresh,
+    grab_spikes,
+    ptp,
+)
 from ...util.torch_util import BModule, torch_compiler
 
 logger = get_logger(__name__)
@@ -253,6 +259,132 @@ class ChunkTemplateData:
             return torch.add(
                 self.obj_normsq[:, None]._neg_view(), conv, alpha=2.0, out=out
             )
+
+    def obj_from_conv_known_pos(
+        self,
+        *,
+        conv: Tensor,
+        out: Tensor,
+        scalings_out: Tensor | None = None,
+    ) -> Tensor:
+        assert conv.shape == out.shape
+        if scalings_out is not None:
+            assert scalings_out.shape == out.shape
+        if self.free_scaling:
+            assert scalings_out is not None
+            return _free_coarse_objective(
+                conv=conv, normsq=self.obj_normsq, out=out, scalings=scalings_out
+            )
+        elif self.scaling:
+            assert scalings_out is not None
+            return _scaled_coarse_objective_known_pos(
+                conv=conv,
+                normsq=self.obj_normsq,
+                out=out,
+                scalings=scalings_out,
+                inv_lambda=self.inv_lambda,
+                scale_min=self.scale_min,
+                scale_max=self.scale_max,
+            )
+        else:
+            return torch.add(
+                self.obj_normsq[:, None]._neg_view(), conv, alpha=2.0, out=out
+            )
+
+    def quick_match(
+        self,
+        *,
+        padded_conv: Tensor,
+        padded_objective_buf: Tensor,
+        refrac_mask: Tensor | None,
+        padded_scaling_buf: Tensor | None,
+        thresholdsq: float,
+        obj_arange: Tensor,
+        padding: int,
+        exclude_extra_padding: int = 0,
+        return_scalings=False,
+    ) -> "MatchingPeaks":
+        # unscaled objective
+        unscaled_obj = torch.add(
+            self.obj_normsq[:, None]._neg_view(),
+            padded_conv,
+            alpha=2.0,
+            out=padded_objective_buf[:-1],
+        )
+        if refrac_mask is not None:
+            # TODO don't like this. what if scaled guy leaks through.
+            # maybe just delete all refractory logic...?
+            unscaled_obj.add_(refrac_mask[:-1])
+
+        # propose peaks
+        obj_max = unscaled_obj.amax(dim=0)
+        nt = obj_max.shape[0]
+        mask = argrelmax_dedup_mask_no_thresh(
+            x=obj_max,
+            dedup_radius=self.filter_length_samples,
+            arange=obj_arange[:nt],
+            padding=padding + exclude_extra_padding,
+        )
+        max_peaks = ceil(nt / self.filter_length_samples)
+        peaks = mask.nonzero_static(size=max_peaks)
+        valid = peaks >= 0
+
+        # scaled refinement
+        peak_dt = 5
+        windows = peaks + torch.arange(-peak_dt, peak_dt + 1, device=peaks.device)
+        windows.masked_fill_(valid.logical_not(), 0)
+        windows_flat = windows.view(-1)
+        window_conv = padded_conv[:, windows_flat]
+        window_objs = torch.empty_like(window_conv)
+        if self.scaling:
+            window_scs = torch.empty_like(window_conv)
+        else:
+            window_scs = None
+        self.obj_from_conv_known_pos(conv=window_conv, out=window_objs, scalings_out=window_scs)
+        window_objs = window_objs.T.reshape(
+            windows.shape[0], windows.shape[1] * padded_conv.shape[0]
+        )
+        best_val, best_ix = window_objs.max(dim=1)
+        best_shift = best_ix // padded_conv.shape[0]
+        best_unit = best_ix % windows.shape[1]
+
+        peaks = peaks.squeeze()
+        times = peaks.add_(best_shift).sub_(peak_dt)
+        valid = valid.squeeze()
+        valid.logical_and_(best_val >= thresholdsq)
+        valid.logical_and_(
+            times
+            == times.clamp(
+                padding + exclude_extra_padding,
+                nt - padding - exclude_extra_padding - 1,
+            )
+        )
+
+        # grab result
+        (keep,) = valid.nonzero(as_tuple=True)
+        if not keep.numel():
+            return MatchingPeaks()
+
+        # best_ix = best_ix[keep]
+        best_shift = best_shift[keep]
+
+        objs = best_val[keep]
+        times = times[keep]
+        template_inds = best_unit[keep]
+        if not return_scalings or window_scs is None:
+            scalings = None
+        else:
+            scalings = window_scs.view(padded_conv.shape[0], *windows.shape)[
+                template_inds, keep, best_shift
+            ]
+
+        return MatchingPeaks(
+            times=times - padding,
+            obj_template_inds=template_inds,
+            template_inds=template_inds,
+            scalings=scalings,
+            scores=objs,
+        )
 
     def coarse_match(
         self,
@@ -624,5 +756,25 @@ def _scaled_coarse_objective(
     # this is 2 * sc * b - sc**2 * a - inv_lambda
     torch.square(scalings, out=out)
     torch.addcmul(-inv_lambda, -a, out, out=out)
+    out.addcmul_(scalings, b, value=2.0)
+    return out
+
+@torch_compiler()
+def _scaled_coarse_objective_known_pos(
+    conv: Tensor,
+    normsq: Tensor,
+    out: Tensor,
+    scalings: Tensor,
+    inv_lambda: Tensor,
+    scale_min: Tensor,
+    scale_max: Tensor,
+) -> Tensor:
+    b = conv + inv_lambda
+    a = normsq[:, None] + inv_lambda
+    torch.divide(b, a, out=scalings)
+    scalings.clamp_(min=scale_min, max=scale_max)
+    # this is 2 * sc * b - sc**2 * a - inv_lambda
+    torch.square(scalings, out=out)
+    torch.addcmul(inv_lambda._neg_view(), a._neg_view(), out, out=out)
     out.addcmul_(scalings, b, value=2.0)
     return out
