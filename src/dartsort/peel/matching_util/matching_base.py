@@ -346,7 +346,7 @@ class ChunkTemplateData:
         )
         best_val, best_ix = window_objs.max(dim=1)
         best_shift = best_ix // padded_conv.shape[0]
-        best_unit = best_ix % windows.shape[1]
+        best_unit = best_ix % padded_conv.shape[0]
 
         peaks = peaks.squeeze()
         times = peaks.add_(best_shift).sub_(peak_dt)

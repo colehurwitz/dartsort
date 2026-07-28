@@ -344,7 +344,8 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
         padded_conv = traces.new_zeros(
             chunk_template_data.obj_n_templates, padded_obj_len
         )
-        padded_scalings = padded_conv.clone() if self.is_scaling else None
+        # padded_scalings = padded_conv.clone() if self.is_scaling else None
+        padded_scalings = None
         padded_objective = traces.new_zeros(
             chunk_template_data.obj_n_templates + 1, padded_obj_len
         )
