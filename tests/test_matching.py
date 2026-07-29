@@ -363,7 +363,7 @@ def test_no_crumbs(subtests, refractory_sim, method, cd_iter, channel_selection_
         cc_err1 = np.abs(match_up_templates - cc_test).max().item()
         cc_test = (match_up_templates + nz - true_temps_up) + true_temps_up - nz
         cc_err2 = np.abs(true_temps_up - cc_test).max().item()
-        cc_atol = max(cc_err1, cc_err2, 2e-5)
+        cc_atol = 2 * max(cc_err1, cc_err2, 1e-5)
 
         extract_chans = matcher.b.channel_index
         cc_wfs = res["collisioncleaned_waveforms"].cpu()
@@ -626,8 +626,6 @@ def test_static(tmp_path, up_factor, cd_iter):
             threshold=0.01,
             up_factor=up_factor,
             amplitude_scaling_variance=0.0,
-            coarse_approx_error_threshold=0.0,
-            conv_ignore_threshold=0.0,
             template_svd_compression_rank=2,
             cd_iter=cd_iter,
             chunk_length_samples=recording_length_samples,

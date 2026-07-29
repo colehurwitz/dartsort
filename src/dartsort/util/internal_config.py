@@ -773,19 +773,15 @@ class MatchingConfig:
     coarse_cd: bool = True
 
     # template matching parameters
-    threshold: float | Literal["fp_control"] = 6.0
+    threshold: float = 6.0
     template_svd_compression_rank: int = 5
     template_svd_compression_min_explained_variance: float = 5e-3
     up_factor: int = 4
     upsampling_radius: int = 8
     template_min_channel_amplitude: float = 1.0
-    refractory_radius_frames: int = 0
     amplitude_scaling_variance: float = 0.01**2
     amplitude_scaling_boundary: float = 1.0 / 3.0
     max_iter: int = 100
-    conv_ignore_threshold: float = 0.0
-    coarse_approx_error_threshold: float = 0.0
-    coarse_objective: bool = True
     channel_selection: Literal["template", "amplitude"] = "template"
     channel_selection_radius: float | None = None
     template_type: Literal["individual_compressed_upsampled", "drifty", "debug"] = (
@@ -797,8 +793,7 @@ class MatchingConfig:
     whitening: WhiteningConfig = WhiteningConfig(strategy="prewhiten_postapply")
     whiten_features: bool = False
     margin_factor: int = 2
-    max_fp_per_input_spike: float = 2.5
-    scale_adjusts_threshold: bool = False
+    peak_dt: int = 3
 
     # template postprocessing parameters
     min_template_ptp: float = 1.0
@@ -1133,7 +1128,6 @@ def to_internal_config(cfg, n_channels: int) -> DARTsortInternalConfig:
             template_type=cfg.matching_template_type,
             up_method=cfg.matching_up_method,
             template_min_channel_amplitude=cfg.matching_template_min_amplitude,
-            refractory_radius_frames=cfg.refractory_radius_frames,
             template_svd_compression_rank=cfg.matching_svd_rank,
             whitening=WhiteningConfig(),  # we don't know how to whiten yet
         )
@@ -1270,7 +1264,7 @@ def to_internal_config(cfg, n_channels: int) -> DARTsortInternalConfig:
         spike_denoising_score=cfg.threshold_before_whitening,
     )
     matching_cfg = MatchingConfig(
-        threshold="fp_control" if cfg.matching_fp_control else cfg.matching_threshold,
+        threshold=cfg.matching_threshold,
         amplitude_scaling_variance=cfg.amplitude_scaling_stddev**2,
         amplitude_scaling_boundary=cfg.amplitude_scaling_boundary,
         up_factor=cfg.temporal_upsamples,
@@ -1301,7 +1295,6 @@ def to_internal_config(cfg, n_channels: int) -> DARTsortInternalConfig:
         ),
         template_svd_compression_rank=cfg.matching_svd_rank,
         drift_interp_params=match_interp_params,
-        refractory_radius_frames=cfg.refractory_radius_frames,
     )
     computation_cfg = ComputationConfig(
         n_jobs_cpu=cfg.n_jobs_cpu,
