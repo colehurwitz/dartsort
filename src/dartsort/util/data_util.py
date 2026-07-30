@@ -3,6 +3,7 @@ from collections import namedtuple
 from collections.abc import Generator, Sequence
 from copy import copy
 from pathlib import Path
+from threading import Lock
 from typing import TYPE_CHECKING, Literal, Self, cast
 
 import h5py
@@ -40,6 +41,7 @@ from .py_util import ensure_path, panic
 from .waveform_util import make_channel_index
 
 logger = get_logger(__name__)
+_lock = Lock()
 
 # this is a data type used in the peeling code to store info about
 # the datasets which are being computed
@@ -93,12 +95,13 @@ class DARTsortSorting:
         self.labels = labels
 
         self._persistent_features: dict[str, np.ndarray] = {}
+        self._ephemeral_features: dict[str, np.ndarray] = {}
+
         if persistent_features is not None:
             for k, v in persistent_features.items():
                 check_shape = not self._no_check_needed(k)
                 self._register_persistent_feature(k, v, check_shape=check_shape)
 
-        self._ephemeral_features: dict[str, np.ndarray] = {}
         if ephemeral_features is not None:
             for k, v in ephemeral_features.items():
                 check_shape = not self._no_check_needed(k)
@@ -439,6 +442,16 @@ class DARTsortSorting:
         if "_persistent_features" in self.__dict__:
             if name in self._persistent_features:
                 return self._persistent_features[name]
+        if "parent_h5_path" in self.__dict__ and self.parent_h5_path is not None:
+            # could be racey. re-check if another thread loaded this.
+            with _lock:
+                if "_persistent_features" in self.__dict__:
+                    if name in self._persistent_features:
+                        return self._persistent_features[name]
+                if self._has_dataset(name):
+                    feature = self._load_dataset(name)
+                    self._register_persistent_feature(name, feature, try_insert=False)
+                    return feature
         raise AttributeError
 
     def add_ephemeral_feature(
@@ -566,6 +579,7 @@ class DARTsortSorting:
             "sampling_frequency",
         ]
         already_loaded.extend(self._persistent_features.keys())
+        already_loaded = set(already_loaded)
 
         with h5py.File(self.parent_h5_path, "r", libver="latest", locking=False) as h5:
             h5_keys = list(h5.keys())
@@ -590,10 +604,12 @@ class DARTsortSorting:
             elif load_feature_names is not None:
                 basic_props = [k for k in h5_keys if self._no_check_needed(k)]
                 load_feature_names = list(load_feature_names) + basic_props
+
             assert load_feature_names is not None
             load_feature_names = [
                 k for k in load_feature_names if k not in already_loaded
             ]
+            load_feature_names = list(set(load_feature_names))
             if allow_missing:
                 load_feature_names = [k for k in load_feature_names if k in h5]
             elif not all(k in h5 for k in load_feature_names):
