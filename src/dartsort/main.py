@@ -348,9 +348,14 @@ def _dartsort_impl(
         else:
             _nspk = cfg.subsampling_spikes_per_channel * motion.geom.shape[0]
         _pres = 1.0 if is_final else cfg.subsampling_presence
-        step_clus_cfg, step_clfeat_cfg, step_ref_cfgs, step_feat_cfg, samp_cfg = (
-            _matching_step_cfgs(is_final, is_subsampling, cfg)
-        )
+        (
+            step_clus_cfg,
+            step_clfeat_cfg,
+            step_ref_cfgs,
+            step_feat_cfg,
+            samp_cfg,
+            will_refine,
+        ) = _matching_step_cfgs(is_final, is_subsampling, cfg)
 
         logger.dartsortdebug(f"-- Matching {step}")
         with timer(f"matching{step}", ret["timing"]):
@@ -373,12 +378,10 @@ def _dartsort_impl(
                 previous_detection_cfg=previous_detection_cfg,
                 prev_step_name=f"refined{step - 1}",
                 save_cfg=cfg,
+                load_simple_features=will_refine,
             )
         logger.info(f"Matching step {step}: {sorting}")
         ds_save_features(cfg, sorting, output_dir, work_dir, is_final)
-
-        if is_final and not cfg.final_refinement:
-            break
 
         with timer(f"cluster{step}", ret["timing"]):
             if step_clus_cfg or (step_ref_cfgs is not None and len(step_ref_cfgs)):
@@ -428,6 +431,7 @@ def initial_detection(
     motion: MotionInfo | None = None,
     overwrite=False,
     show_progress=True,
+    load_simple_features: bool = True,
 ) -> DARTsortSorting:
     """Initial spike detection
 
@@ -467,6 +471,7 @@ def initial_detection(
             ensure_coverage=cfg.subsampling_presence,
             overwrite=overwrite,
             show_progress=show_progress,
+            load_simple_features=load_simple_features,
         )
     elif cfg.detection_type == "threshold":
         assert isinstance(cfg.initial_detection_cfg, ThresholdingConfig)
@@ -482,6 +487,7 @@ def initial_detection(
             overwrite=overwrite,
             show_progress=show_progress,
             computation_cfg=cfg.computation_cfg,
+            load_simple_features=load_simple_features,
         )
     elif cfg.detection_type == "match":
         assert isinstance(cfg.initial_detection_cfg, MatchingConfig)
@@ -499,6 +505,7 @@ def initial_detection(
             overwrite=overwrite,
             show_progress=show_progress,
             computation_cfg=cfg.computation_cfg,
+            load_simple_features=load_simple_features,
         )
     else:
         raise ValueError(f"Unknown detection_type {cfg.detection_type}.")
@@ -521,6 +528,7 @@ def subtract(
     show_progress=True,
     hdf5_filename="subtraction.h5",
     model_subdir="subtraction_models",
+    load_simple_features: bool = True,
 ) -> DARTsortSorting:
     output_dir = ensure_path(output_dir)
     computation_cfg = ensure_computation_config(computation_cfg)
@@ -547,6 +555,7 @@ def subtract(
         stop_after_n_spikes=stop_after_n_spikes,
         ensure_coverage=ensure_coverage,
         shuffle=shuffle,
+        load_simple_features=load_simple_features,
     )
 
     del subtraction_peeler
@@ -582,6 +591,7 @@ def match(
     computation_cfg: ComputationConfig | None = None,
     template_denoising_tsvd=None,
     whitener: Whitener | None = None,
+    load_simple_features: bool = True,
 ) -> DARTsortSorting:
     output_dir = ensure_path(output_dir)
     model_dir = output_dir / model_subdir
@@ -649,6 +659,7 @@ def match(
         skip_resid_snips=skip_resid_snips,
         show_progress=show_progress,
         computation_cfg=computation_cfg,
+        load_simple_features=load_simple_features,
     )
 
     del matching_peeler
@@ -710,6 +721,7 @@ def threshold(
     hdf5_filename="threshold.h5",
     model_subdir="threshold_models",
     computation_cfg: ComputationConfig | None = None,
+    load_simple_features: bool = True,
 ) -> DARTsortSorting:
     output_dir = ensure_path(output_dir)
     computation_cfg = ensure_computation_config(computation_cfg)
@@ -734,6 +746,7 @@ def threshold(
         overwrite=overwrite,
         show_progress=show_progress,
         computation_cfg=computation_cfg,
+        load_simple_features=load_simple_features,
     )
 
     del thresholder

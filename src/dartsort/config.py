@@ -248,7 +248,7 @@ class DeveloperConfig(DARTsortUserConfig):
     detection_type: Literal["subtract", "match", "threshold"] = "subtract"
     cluster_strategy: str = "dpc"
     refinement_strategy: str = "tmm"
-    recluster_after_first_matching: bool = False
+    recluster_after_matching: bool = False
 
     # general peeling
     n_waveforms_fit: int = 40_000

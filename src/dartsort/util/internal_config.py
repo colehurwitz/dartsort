@@ -952,9 +952,8 @@ class DARTsortInternalConfig:
     detection_type: Literal["subtract", "match", "threshold"] = "subtract"
     preprocessing: PreprocessingStrategy = "none"
     preprocessing_dtype: Literal["float16", "float32"] = "float32"
-    final_refinement: bool = True
     matching_iterations: int = 1
-    recluster_after_first_matching: bool = False
+    recluster_after_matching: bool = False
     # subsampling: intermediate peels will continue until both criteria satisfied
     # need at least this many spikes
     subsampling_spikes_per_channel: int | None = 5000
@@ -1391,7 +1390,7 @@ def to_internal_config(cfg, n_channels: int) -> DARTsortInternalConfig:
         detection_type=cfg.detection_type,
         dredge_only=cfg.dredge_only,
         matching_iterations=cfg.matching_iterations,
-        recluster_after_first_matching=cfg.recluster_after_first_matching,
+        recluster_after_matching=cfg.recluster_after_matching,
         work_in_tmpdir=cfg.work_in_tmpdir,
         copy_recording_to_tmpdir=cfg.copy_recording_to_tmpdir,
         workdir_copier=cfg.workdir_copier,

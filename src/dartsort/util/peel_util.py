@@ -35,6 +35,7 @@ def run_peeler(
     ensure_coverage: float | None = None,
     shuffle: bool = False,
     localization_dataset_name="point_source_localizations",
+    load_simple_features: bool = True,
 ):
     output_directory = ensure_path(output_directory)
     output_directory.mkdir(exist_ok=True)
@@ -74,7 +75,9 @@ def run_peeler(
         shuffle=is_subsampling or shuffle,
         n_residual_snips=n_resid_snips,
     ):
-        return DARTsortSorting.from_peeling_hdf5(output_hdf5_filename)
+        return DARTsortSorting.from_peeling_hdf5(
+            output_hdf5_filename, load_simple_features=load_simple_features
+        )
 
     # ensure torch linalg inits before launching threads...
     _ensure_torch_linalg(computation_cfg)
@@ -149,7 +152,9 @@ def run_peeler(
             localization_model=featurization_cfg.localization_model,
         )
 
-    return DARTsortSorting.from_peeling_hdf5(output_hdf5_filename)
+    return DARTsortSorting.from_peeling_hdf5(
+        output_hdf5_filename, load_simple_features=load_simple_features
+    )
 
 
 def peeler_is_done(

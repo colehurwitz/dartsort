@@ -504,6 +504,7 @@ class DARTsortSorting:
         feature_name: str,
         feature: np.ndarray,
         check_shape: bool | None = None,
+        try_insert: bool = True,
     ):
         """Persistent features are written to the h5."""
         if self.parent_h5_path is None:
@@ -517,7 +518,14 @@ class DARTsortSorting:
             self._check_shape(feature_name, feature)
         if feature_name in self._persistent_features:
             raise ValueError(f"Persistent feature {feature_name} already exists.")
+        if feature_name in self._ephemeral_features:
+            raise ValueError(
+                f"Persistent feature {feature_name} was already ephemeral?"
+            )
         self._persistent_features[feature_name] = feature
+
+        if not try_insert:
+            return
 
         try:
             with h5py.File(
@@ -534,6 +542,69 @@ class DARTsortSorting:
             )
 
     # save / load
+
+    def load_persistent_features(
+        self,
+        times_samples_dataset="times_samples",
+        channels_dataset="channels",
+        labels_dataset="labels",
+        load_feature_names: Sequence[str] | None = None,
+        load_simple_features=True,
+        load_all_features=False,
+        allow_missing=False,
+    ):
+        if load_feature_names is not None:
+            load_feature_names = [str(fn) for fn in load_feature_names]
+        logger.dartsortdebug(
+            "Load features %s from %s", load_feature_names, self.parent_h5_path
+        )
+        n = self.n_spikes
+        already_loaded = [
+            times_samples_dataset,
+            channels_dataset,
+            labels_dataset,
+            "sampling_frequency",
+        ]
+        already_loaded.extend(self._persistent_features.keys())
+
+        with h5py.File(self.parent_h5_path, "r", libver="latest", locking=False) as h5:
+            h5_keys = list(h5.keys())
+            if load_feature_names is None and load_all_features:
+                load_feature_names = [
+                    k for k in h5_keys if h5[k].ndim > 0 and h5[k].shape[0] == n
+                ]
+            elif load_feature_names is None and load_simple_features:
+                load_feature_names = []
+                for k in h5_keys:
+                    if k in already_loaded:
+                        continue
+                    if self._no_check_needed(k):
+                        load_feature_names.append(k)
+                        continue
+                    dset = cast(h5py.Dataset, h5[k])
+                    is_simple = 1 <= dset.ndim <= 2 and dset.shape[0] == n
+                    if is_simple:
+                        load_feature_names.append(k)
+            elif load_feature_names is None:
+                load_feature_names = [k for k in h5_keys if self._no_check_needed(k)]
+            elif load_feature_names is not None:
+                basic_props = [k for k in h5_keys if self._no_check_needed(k)]
+                load_feature_names = list(load_feature_names) + basic_props
+            assert load_feature_names is not None
+            load_feature_names = [
+                k for k in load_feature_names if k not in already_loaded
+            ]
+            if allow_missing:
+                load_feature_names = [k for k in load_feature_names if k in h5]
+            elif not all(k in h5 for k in load_feature_names):
+                raise ValueError(
+                    f"Couldn't load datasets {','.join(k for k in load_feature_names if k not in h5)} from {self.parent_h5_path}."
+                )
+
+            for k in load_feature_names:
+                self._register_persistent_feature(
+                    feature_name=k, feature=h5[k][()], try_insert=False
+                )
 
     @classmethod
     def from_peeling_hdf5(
@@ -565,11 +636,10 @@ class DARTsortSorting:
             _lfn = []
         else:
             _lfn = [str(fn) for fn in load_feature_names]
-        logger.dartsortdebug("Read features %s from %s", _lfn, h5_path)
+        logger.dartsortdebug("Read sorting %s from %s", _lfn, h5_path)
 
         with h5py.File(h5_path, "r", libver="latest", locking=False) as h5:
             times_samples = cast(h5py.Dataset, h5[times_samples_dataset])[:]
-            n = times_samples.shape[0]
             channels = cast(h5py.Dataset, h5[channels_dataset])[:]
             sampling_frequency = float(
                 cast(h5py.Dataset, h5["sampling_frequency"])[()].item()
@@ -578,53 +648,26 @@ class DARTsortSorting:
                 labels = cast(h5py.Dataset, h5[labels_dataset])[:]
             else:
                 labels = None
+            _lfn.extend([k for k in h5 if cls._no_check_needed(k) and k not in _lfn])
 
-            already_loaded = [
-                times_samples_dataset,
-                channels_dataset,
-                labels_dataset,
-                "sampling_frequency",
-            ]
-            h5_keys = list(h5.keys())
-            if load_feature_names is None and load_all_features:
-                load_feature_names = [
-                    k for k in h5_keys if h5[k].ndim > 0 and h5[k].shape[0] == n
-                ]
-            elif load_feature_names is None and load_simple_features:
-                load_feature_names = []
-                for k in h5_keys:
-                    if k in already_loaded:
-                        continue
-                    if cls._no_check_needed(k):
-                        load_feature_names.append(k)
-                        continue
-                    dset = cast(h5py.Dataset, h5[k])
-                    is_simple = 1 <= dset.ndim <= 2 and dset.shape[0] == n
-                    if is_simple:
-                        load_feature_names.append(k)
-            elif load_feature_names is None:
-                load_feature_names = [k for k in h5_keys if cls._no_check_needed(k)]
-            elif load_feature_names is not None:
-                basic_props = [k for k in h5_keys if cls._no_check_needed(k)]
-                load_feature_names = list(load_feature_names) + basic_props
-            assert load_feature_names is not None
-            load_feature_names = [
-                k for k in load_feature_names if k not in already_loaded
-            ]
-            if allow_missing:
-                load_feature_names = [k for k in load_feature_names if k in h5]
-            persistent_features = {
-                k: cast(h5py.Dataset, h5[k])[:] for k in load_feature_names
-            }
-
-        return cls(
+        self = cls(
             times_samples=times_samples,
             channels=channels,
             labels=labels,
             sampling_frequency=sampling_frequency,
-            persistent_features=persistent_features,
             parent_h5_path=h5_path,
         )
+        if _lfn or load_simple_features or load_all_features:
+            self.load_persistent_features(
+                times_samples_dataset=times_samples_dataset,
+                channels_dataset=channels_dataset,
+                labels_dataset=labels_dataset,
+                load_feature_names=_lfn,
+                load_simple_features=load_simple_features,
+                load_all_features=load_all_features,
+                allow_missing=allow_missing,
+            )
+        return self
 
     def save(
         self,
