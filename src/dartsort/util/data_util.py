@@ -1,8 +1,9 @@
 import warnings
 from collections import namedtuple
+from collections.abc import Generator, Sequence
 from copy import copy
 from pathlib import Path
-from typing import TYPE_CHECKING, Generator, Literal, Self, Sequence, cast
+from typing import TYPE_CHECKING, Literal, Self, cast
 
 import h5py
 import numba
@@ -66,7 +67,7 @@ class DARTsortSorting:
         channels: np.ndarray,
         labels: np.ndarray | None,
         parent_h5_path: str | Path | None = None,
-        sampling_frequency: float | int = 30000.0,
+        sampling_frequency: float = 30000.0,
         persistent_features: dict[str, np.ndarray] | None = None,
         ephemeral_features: dict[str, np.ndarray] | None = None,
     ):
@@ -133,7 +134,7 @@ class DARTsortSorting:
     ) -> NumpySorting:
         """Clean up and produce a spikeinterface NumpySorting object."""
         if drop_doubles:
-            self = self.drop_doubles()
+            self = self.drop_doubles()  # noqa: PLW0642
         assert self.labels is not None
         st = self.drop_missing()
         assert st.labels is not None
@@ -1176,7 +1177,7 @@ def load_stored_tsvd(
     else:
         assert not trim_rank_to
     logger.info(
-        "Loaded stored basis from %s (%s; components shape: %s).",
+        "Loaded stored basis from %s (components shape: %s).",
         tsvd_name,
         tsvd.components_.shape,
     )
@@ -1529,7 +1530,7 @@ def check_recording(
             torch.tensor(chunk, dtype=dtype),
             threshold=threshold,
             peak_sign="both",
-            dedup_channel_index=torch.tensor(dedup_channel_index),
+            dedup_neighborhoods=torch.tensor(dedup_channel_index),
         )
         times = dres[0]
         del dres
@@ -1989,7 +1990,7 @@ def fit_reweighting(
         if h5 is not None:
             voltages: np.ndarray = h5[voltages_dataset_name][:]
         elif hdf5_path is not None:
-            with h5py.File(hdf5_path) as h5:
+            with h5py.File(hdf5_path) as h5:  # noqa: PLR1704
                 voltages: np.ndarray = h5[voltages_dataset_name][:]
         else:
             panic()

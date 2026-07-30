@@ -165,8 +165,6 @@ class Threshold(BasePeeler):
             peak_channel_index=self.b.peak_channel_index,
             temporal_dedup_radius_samples=self.p.temporal_dedup_radius_samples,
             remove_exact_duplicates=self.p.remove_exact_duplicates,
-            convexity_threshold=self.p.convexity_threshold,
-            convexity_radius=self.p.convexity_radius,
             thinning=self.thinning,
             time_jitter=self.p.time_jitter,
             spatial_jitter_channel_index=self.spatial_jitter_channel_index,

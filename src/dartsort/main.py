@@ -166,7 +166,7 @@ def dartsort(
                 error_data_path = output_dir / "error_state"
                 with traceback_path.open("w") as f:
                     traceback.print_exception(e, file=f)
-                logger.exception()
+                logger.exception(e)
                 if cfg.save_everything_on_error:
                     logger.critical(
                         f"Hit an error. Copying outputs to {error_data_path} "
@@ -198,7 +198,7 @@ def dartsort(
         traceback_path = output_dir / "traceback.txt"
         with traceback_path.open("w") as f:
             traceback.print_exception(e, file=f)
-        logger.exception()
+        logger.exception(e)
         logger.critical(f"Hit an error. Wrote traceback to {traceback_path}.")
         raise
 

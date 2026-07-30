@@ -698,15 +698,13 @@ class SubtractionConfig:
     spatial_dedup_radius_um: float | None = 50.0
     temporal_dedup_radius_samples: int = 7
     remove_exact_duplicates: bool = True
+    subtract_global_dedup: bool = False
     positive_temporal_dedup_radius_samples: int = 41
     subtract_radius_um: float = 200.0
     residnorm_decrease_threshold: float = 7.0
     decrease_objective: Literal["norm", "normsq", "deconv"] = "deconv"
-    growth_tolerance: float | None = None
     trough_priority: float | None = 2.0
-    convexity_threshold: float | None = None
-    convexity_radius: int = 7
-    max_iter: int = 100
+    max_iter: int = 200
     whiten: bool = True
     threshold_before_whitening: float = 10.0
     whiten_cfg: WhiteningConfig | None = WhiteningConfig(strategy="prewhiten_postapply")
@@ -752,8 +750,6 @@ class ThresholdingConfig:
     relative_peak_radius_samples: int = 5
     temporal_dedup_radius_samples: int = 11
     remove_exact_duplicates: bool = True
-    convexity_threshold: float | None = None
-    convexity_radius: int = 7
 
     thinning: float = 0.0
     time_jitter: int = 0
@@ -850,7 +846,6 @@ class MotionEstimationConfig:
     tpca_rank: int = 8
     localization_radius_um: float = 100.0
     threshold_cfg: ThresholdingConfig = ThresholdingConfig()
-    spike_denoising_score: float = 10.0
 
 
 @cfg_dataclass
@@ -1096,6 +1091,8 @@ def to_internal_config(cfg, n_channels: int) -> DARTsortInternalConfig:
             subtract_radius_um=cfg.subtraction_radius_um,
             realign_to_denoiser=cfg.realign_to_denoiser,
             residnorm_decrease_threshold=cfg.initial_threshold,
+            threshold_before_whitening=cfg.threshold_before_whitening,
+            subtract_global_dedup=cfg.subtract_global_dedup,
             chunk_length_samples=cfg.chunk_length_samples,
             first_denoiser_thinning=cfg.first_denoiser_thinning,
             first_denoiser_max_waveforms_fit=cfg.nn_denoiser_max_waveforms_fit,
@@ -1255,13 +1252,12 @@ def to_internal_config(cfg, n_channels: int) -> DARTsortInternalConfig:
         detection_threshold=cfg.motion_voltage_threshold,
         chunk_length_samples=cfg.chunk_length_samples,
         peak_sign=cfg.peak_sign,
-        shave_score=cfg.threshold_before_whitening,
+        shave_score=cfg.shave_score,
     )
     motion_estimation_cfg = MotionEstimationConfig(
         **motion_kw,
         tpca_rank=cfg.temporal_pca_rank,
         threshold_cfg=motion_threshold_cfg,
-        spike_denoising_score=cfg.threshold_before_whitening,
     )
     matching_cfg = MatchingConfig(
         threshold=cfg.matching_threshold,

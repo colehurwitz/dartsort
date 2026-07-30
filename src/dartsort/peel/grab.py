@@ -134,7 +134,6 @@ class GrabAndFeaturize(BasePeeler):
                 return_waveforms=return_waveforms,
                 chunk_start_samples=chunk_start_samples,
                 chunk_end_samples=chunk_end_samples,
-                device=chunk.device,
                 n_resid_snips=n_resid_snips,
             )
             batch_results.append(batch_res)

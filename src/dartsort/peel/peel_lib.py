@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from spikeinterface.core import BaseRecording
 from torch import Tensor
 
-from ..detect import convexity_filter, detect_and_deduplicate
+from ..detect import detect_and_deduplicate, detect_and_globally_deduplicate
 from ..util.internal_config import (
     ComputationConfig,
     FitSamplingConfig,
@@ -197,6 +197,7 @@ def subtract_chunk(
     channel_index: Tensor,
     denoising_pipeline: "WaveformPipeline",
     sub_dedup_channel_index: Tensor | None = None,
+    subtract_global_dedup: bool = False,
     extract_index: Tensor | None = None,
     extract_mask: Tensor | None = None,
     trough_offset_samples=42,
@@ -208,8 +209,6 @@ def subtract_chunk(
     realign_to_denoiser=False,
     denoiser_realignment_shift=5,
     denoiser_realignment_channel="detection",
-    convexity_threshold=None,
-    convexity_radius=3,
     peak_channel_index: Tensor | None = None,
     dedup_channel_index: Tensor | None = None,
     subtract_rel_inds: Tensor | None = None,
@@ -224,7 +223,6 @@ def subtract_chunk(
     no_subtraction=False,
     max_iter=100,
     trough_priority: float | None = None,
-    growth_tolerance: float | None = None,
     save_iteration=False,
     save_residnorm_decrease=False,
     compute_collidedness=False,
@@ -245,8 +243,6 @@ def subtract_chunk(
             relative_peak_radius=relative_peak_radius,
             temporal_dedup_radius_samples=dedup_temporal_radius,
             remove_exact_duplicates=remove_exact_duplicates,
-            convexity_threshold=convexity_threshold,
-            convexity_radius=convexity_radius,
             max_spikes_per_chunk=None,
             quiet=False,
         )
@@ -280,11 +276,6 @@ def subtract_chunk(
     post_trough_samples = spike_length_samples - trough_offset_samples
     max_trough_time = traces.shape[0] - post_trough_samples
 
-    if growth_tolerance is not None:
-        gtol = traces.abs().add_(growth_tolerance)
-    else:
-        gtol = None
-
     # initialize residual, it needs to be padded to support
     # our channel indexing convention. this copies the input.
     residual = F.pad(traces, (0, 1), value=torch.nan)
@@ -306,46 +297,34 @@ def subtract_chunk(
         )
 
     for it in range(max_iter):
-        residual_det = residual[:, :-1]
-        if it and gtol is not None:
-            residual_det = residual_det.clamp(-gtol, gtol)
-
-        times_samples, channels = detect_and_deduplicate(
-            residual_det,
-            detection_threshold,
-            peak_channel_index=peak_channel_index,
-            dedup_channel_index=sub_dedup_channel_index,
-            peak_sign=peak_sign,
-            relative_peak_radius=relative_peak_radius,
-            dedup_temporal_radius=spike_length_samples,
-            remove_exact_duplicates=remove_exact_duplicates,
-            detection_mask=detection_mask[:, :-1] if it else None,
-            trough_priority=trough_priority,
-        )
-        if not times_samples.numel():
-            break
-
-        if it:
-            keep = detection_mask[times_samples, channels]
-            (keep,) = keep.nonzero(as_tuple=True)
-            times_samples = times_samples[keep]
-            channels = channels[keep]
-
-        if not times_samples.numel():
-            break
-
-        if convexity_threshold:
-            keep = convexity_filter(
-                residual,
-                times_samples,
-                channels,
-                threshold=convexity_threshold,
-                radius=convexity_radius,
+        if subtract_global_dedup:
+            times_samples, channels = detect_and_globally_deduplicate(
+                traces=residual,
+                threshold=detection_threshold,
+                peak_sign=peak_sign,
+                relative_peak_radius=relative_peak_radius,
+                peak_channel_index=peak_channel_index,
+                dedup_temporal_radius=spike_length_samples,
+                trough_priority=trough_priority,
+                remove_exact_duplicates=remove_exact_duplicates,
+                detection_mask=detection_mask[:, :-1] if it else None,
             )
-            times_samples = times_samples[keep]
-            channels = channels[keep]
-            if not times_samples.numel():
-                break
+        else:
+            residual_det = residual[:, :-1]
+            times_samples, channels = detect_and_deduplicate(
+                residual_det,
+                detection_threshold,
+                peak_channel_index=peak_channel_index,
+                dedup_neighborhoods=sub_dedup_channel_index,
+                peak_sign=peak_sign,
+                relative_peak_radius=relative_peak_radius,
+                dedup_temporal_radius=spike_length_samples,
+                remove_exact_duplicates=remove_exact_duplicates,
+                detection_mask=detection_mask[:, :-1] if it else None,
+                trough_priority=trough_priority,
+            )
+        if not times_samples.numel():
+            break
 
         voltages = residual[times_samples, channels]
 
@@ -418,7 +397,7 @@ def subtract_chunk(
         features.update(new_feats)
         if resid_keep is not None:
             if not resid_keep.numel():
-                break
+                continue
             assert original_waveforms is not None
             if resid_keep.numel() < len(original_waveforms):
                 waveforms = waveforms[resid_keep]
@@ -575,8 +554,6 @@ def threshold_chunk(
     time_jitter=0,
     trough_priority=None,
     spatial_jitter_channel_index=None,
-    convexity_threshold=None,
-    convexity_radius=3,
     return_waveforms=True,
     rg=None,
     quiet=False,
@@ -586,7 +563,7 @@ def threshold_chunk(
         traces,
         threshold=detection_threshold,
         peak_channel_index=peak_channel_index,
-        dedup_channel_index=dedup_channel_index,
+        dedup_neighborhoods=dedup_channel_index,
         peak_sign=peak_sign,
         dedup_temporal_radius=temporal_dedup_radius_samples,
         remove_exact_duplicates=remove_exact_duplicates,
@@ -604,18 +581,6 @@ def threshold_chunk(
             voltages=energies,
             waveforms=energies.view(-1, spike_length_samples, n_index),
         )
-    if convexity_threshold:
-        keep = convexity_filter(
-            traces,
-            times_rel,
-            channels,
-            threshold=convexity_threshold,
-            radius=convexity_radius,
-        )
-        times_rel = times_rel[keep]
-        channels = channels[keep]
-        energies = energies[keep]
-        del keep
 
     orig_times_rel = times_rel
     orig_channels = channels
@@ -774,7 +739,7 @@ def shave_chunk(
         traces,
         detection_threshold,
         peak_channel_index=peak_channel_index,
-        dedup_channel_index=dedup_channel_index,
+        dedup_neighborhoods=dedup_channel_index,
         peak_sign=peak_sign,
         dedup_temporal_radius=temporal_dedup_radius_samples,
         remove_exact_duplicates=remove_exact_duplicates,

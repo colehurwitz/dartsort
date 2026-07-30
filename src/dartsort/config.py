@@ -267,7 +267,9 @@ class DeveloperConfig(DARTsortUserConfig):
     use_nn_in_subtraction: bool = True
     whiten_in_subtraction: bool = True
     threshold_before_whitening: float = 10.0
+    shave_score: float = 10.0
     temporal_dedup_radius_samples: int = 7
+    subtract_global_dedup: bool = False
     positive_temporal_dedup_radius_samples: int = 41
     spikeinterface_merge_max_distance: float = 0.8
 
@@ -310,8 +312,6 @@ class DeveloperConfig(DARTsortUserConfig):
     polyharmonic_order: int = 2
 
     # initial clustering
-    initial_euclidean_complete_only: bool = False
-    initial_cosine_complete_only: bool = False
     initial_amp_feat: bool = False
     initial_signed_amp_feat: bool = True
     initial_pc_feats: int = 5

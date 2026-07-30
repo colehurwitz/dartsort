@@ -221,7 +221,12 @@ class Decollider(BaseMultichannelDenoiser):
                 channels=channels,
             )
         train_data, val_data = self._construct_datasets_from_waveforms(
-            waveforms, channels, recording, weights, hdf5_filename=hdf5_filename
+            waveforms,
+            channels,
+            recording,
+            weights,
+            hdf5_filename=hdf5_filename,
+            device=computation_cfg.actual_device(),
         )
         with torch.enable_grad():
             if self.tpca is not None:
@@ -433,8 +438,11 @@ class Decollider(BaseMultichannelDenoiser):
         weights=None,
         hdf5_filename=None,
         dataset_name="residual",
+        device="cpu",
     ):
         rg = np.random.default_rng(self.random_seed)
+        device = torch.device(device)
+        pin_memory = device.type == "cuda"
 
         _, n_data_workers = handle_negative_jobs(self.n_data_workers)
 
@@ -470,6 +478,7 @@ class Decollider(BaseMultichannelDenoiser):
                 dataset_name=dataset_name,
                 chunk_size=self.batches_per_chunk * self.batch_size,
                 n_workers=n_data_workers,
+                pin_memory=pin_memory,
             )
         else:
             logger.dartsortdebug("Load Decollider train noise data from recording.")
@@ -481,6 +490,7 @@ class Decollider(BaseMultichannelDenoiser):
                 generator=spawn_torch_rg(rg),
                 queue_chunks=self.queue_chunks,
                 n_workers=n_data_workers,
+                pin_memory=pin_memory,
             )
         if self.cycle_loss_alpha and can_load_h5:
             logger.dartsortdebug(
@@ -496,6 +506,7 @@ class Decollider(BaseMultichannelDenoiser):
                 dataset_name=dataset_name,
                 chunk_size=self.batch_size,
                 n_workers=n_data_workers,
+                pin_memory=pin_memory,
             )
         elif self.cycle_loss_alpha:
             logger.dartsortdebug("Load Decollider cycle noise data from recording.")
@@ -507,6 +518,7 @@ class Decollider(BaseMultichannelDenoiser):
                 generator=spawn_torch_rg(rg),
                 queue_chunks=self.queue_chunks,
                 n_workers=n_data_workers,
+                pin_memory=pin_memory,
             )
         else:
             train_cycle_noise_dataset = NoneDataset(len(train_channels))
@@ -528,6 +540,7 @@ class Decollider(BaseMultichannelDenoiser):
             sampler=train_sampler,
             num_workers=0,
             batch_size=None,
+            pin_memory=pin_memory,
         )
         train_data = DecolliderDataLoader(
             loader=train_loader,

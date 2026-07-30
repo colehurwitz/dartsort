@@ -20,7 +20,7 @@ def detect_and_deduplicate(
     relative_peak_radius=5,
     peak_channel_index: Tensor | None = None,
     dedup_temporal_radius=11,
-    dedup_channel_index: torch.Tensor | None = None,
+    dedup_neighborhoods: torch.Tensor | None = None,
     trough_priority: float | None = None,
     batch_size=1024,
     *,
@@ -39,7 +39,7 @@ def detect_and_deduplicate(
     ----------
     traces : time by channels tensor
     threshold : float
-    dedup_channel_index : channels by n_neighbors tensor
+    dedup_neighborhoods : channels by n_neighbors tensor
         Channel neighbors index. (See waveform_util for
         more on this format.) If supplied, peaks are kept
         only when they are the largest among their neighbors
@@ -60,12 +60,12 @@ def detect_and_deduplicate(
     """
     T, C = traces.shape
     all_peaks = torch.zeros_like(traces, dtype=torch.bool)
-    will_dedup = bool(dedup_temporal_radius) or dedup_channel_index is not None
+    will_dedup = bool(dedup_temporal_radius) or dedup_neighborhoods is not None
     pad = relative_peak_radius + dedup_temporal_radius
     batch_size = batch_size - 2 * pad
     assert batch_size > 0
 
-    if dedup_channel_index is not None and remove_exact_duplicates:
+    if dedup_neighborhoods is not None and remove_exact_duplicates:
         key = (traces.device.type, traces.device.index, C)
         if key in _salt:
             dedup_chans_salt = _salt[key]
@@ -123,7 +123,7 @@ def detect_and_deduplicate(
         # -- detect peaks
         detect = Xth[:-1] > threshold
         peak = _is_extreme(
-            Xdd,
+            Xth,
             dt=relative_peak_radius,
             neighbors=peak_channel_index,
         )
@@ -149,7 +149,7 @@ def detect_and_deduplicate(
 
         # no-threshold max pool for deduplication
         dedup = _is_extreme(
-            Xdd, dt=dedup_temporal_radius, neighbors=dedup_channel_index
+            Xdd, dt=dedup_temporal_radius, neighbors=dedup_neighborhoods
         )
         all_peaks[i0:i1] = detect.logical_and_(dedup)[:, istart:iend].T
 
@@ -189,3 +189,111 @@ def _is_extreme(
     peak = torch.ge(X[:-1], Xmax)
 
     return peak
+
+
+@torch_compile
+def _is_extreme_transpose_no_pad(
+    X: Tensor,
+    dt: int = 5,
+    neighbors: Tensor | None = None,
+    batch_size: int = 4096,
+):
+    if neighbors is not None:
+        T, C = X.shape
+        Xmax = X.new_empty((T, C - 1))
+        for i0 in range(0, T, batch_size):
+            i1 = min(T, i0 + batch_size)
+            # TC -> T, C, n_neighbors
+            Xneighb = X[i0:i1, neighbors]
+            torch.amax(Xneighb, dim=2, out=Xmax[i0:i1])
+    else:
+        Xmax = X[:, :-1]
+    Xmax = F.max_pool2d(
+        Xmax[None, None, :, :],
+        stride=(1, 1),
+        kernel_size=(2 * dt + 1, 1),
+        padding=(dt, 0),
+    )
+    Xmax = Xmax[0, 0]
+
+    # if max pool made you grow, or if thresholding made you grow,
+    # then you were not a peak
+    peak = torch.ge(X[:, :-1], Xmax)
+
+    return peak
+
+
+_arange_cache = {}
+
+
+def detect_and_globally_deduplicate(
+    traces: Tensor,
+    threshold: float,
+    peak_sign: Literal["pos", "neg", "both"] = "neg",
+    relative_peak_radius=5,
+    peak_channel_index: Tensor | None = None,
+    dedup_temporal_radius=11,
+    trough_priority: float | None = None,
+    *,
+    remove_exact_duplicates=True,
+    detection_mask: Tensor | None = None,
+    exclude_edges=True,
+):
+    # copy data for threshold criterion
+    if peak_sign == "neg":
+        Xth = traces.neg()
+    elif peak_sign == "pos":
+        Xth = traces.clone()
+    elif peak_sign == "both":
+        Xth = traces.abs()
+    Xth[:, -1].fill_(-torch.inf)
+
+    detect = Xth[:, :-1] > threshold
+    peak = _is_extreme_transpose_no_pad(
+        Xth,
+        dt=relative_peak_radius,
+        neighbors=peak_channel_index,
+    )
+    detect = detect.logical_and_(peak)
+    if detection_mask is not None:
+        detect.logical_and_(detection_mask)
+    tmp = peak
+    del peak
+
+    if peak_sign == "both" and trough_priority:
+        # Xdd = F.leaky_relu(traces, negative_slope=-trough_priority)
+        # equivalently, up to a constant...
+        coef = (1 - trough_priority) / (1 + trough_priority)
+        Xdd = Xth[:, :-1].add_(traces[:, :-1], alpha=coef)
+    else:
+        Xdd = Xth[:, :-1]
+    mask_out = torch.logical_not(detect, out=tmp)
+    Xdd.masked_fill_(mask_out, 0.0)
+
+    maxdd, maxchan = Xdd.max(dim=1)
+    tmaxdd, tinds = F.max_pool1d_with_indices(
+        maxdd[None, None],
+        kernel_size=(2 * dedup_temporal_radius + 1,),
+        padding=(dedup_temporal_radius,),
+        stride=(1,),
+    )
+    tmaxdd = tmaxdd[0, 0]
+    tinds = tinds[0, 0]
+    keep = maxdd >= tmaxdd
+
+    if remove_exact_duplicates:
+        ark = (traces.device.type, traces.device.index, traces.shape[0], exclude_edges)
+        if ark in _arange_cache:
+            tref = _arange_cache[ark]
+        else:
+            tref = torch.arange(traces.shape[0], device=traces.device)
+            if exclude_edges:
+                tref[[0, traces.shape[0] - 1]] = traces.shape[0] + 2
+            _arange_cache[ark] = tref
+        keep.logical_and_(tinds == tref)
+    elif exclude_edges:
+        keep[0].zero_()
+        keep[-1].zero_()
+
+    (which,) = keep.nonzero(as_tuple=True)
+    return tinds[which], maxchan[which]
