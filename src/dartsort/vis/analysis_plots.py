@@ -569,7 +569,6 @@ def plot_denoiser_scores(
     channel_index=None,
     count_per_unit: int = 128,
     figscale: float = 2.0,
-    decrease_objective="deconv",
     seed: int = 0,
     vmax=50.0,
     volt_rad=75.0,
@@ -649,7 +648,6 @@ def plot_denoiser_scores(
         _, sc_res_a = check_residual_decrease(
             x,
             y,
-            decrease_objective=decrease_objective,
             threshold=-1.0,
             save_residnorm_decrease=True,
         )
@@ -674,7 +672,6 @@ def plot_denoiser_scores(
             _, template_sc_res_a = check_residual_decrease(
                 x,
                 ty,
-                decrease_objective=decrease_objective,
                 threshold=-1.0,
                 save_residnorm_decrease=True,
             )
@@ -687,7 +684,6 @@ def plot_denoiser_scores(
             _, template_sc_res_b = check_residual_decrease(
                 x,
                 ty,
-                decrease_objective=decrease_objective,
                 threshold=-1.0,
                 save_residnorm_decrease=True,
                 local_whiteners=local_whiteners,
@@ -702,7 +698,6 @@ def plot_denoiser_scores(
         _, sc_res_b = check_residual_decrease(
             x,
             y,
-            decrease_objective=decrease_objective,
             threshold=-1.0,
             save_residnorm_decrease=True,
             local_whiteners=local_whiteners,

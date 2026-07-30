@@ -269,7 +269,7 @@ class DeveloperConfig(DARTsortUserConfig):
     threshold_before_whitening: float = 10.0
     shave_score: float = 10.0
     temporal_dedup_radius_samples: int = 7
-    subtract_global_dedup: bool = False
+    subtract_global_dedup: bool = True
     positive_temporal_dedup_radius_samples: int = 41
     spikeinterface_merge_max_distance: float = 0.8
 

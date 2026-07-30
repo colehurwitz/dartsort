@@ -1,7 +1,7 @@
 """A simple residual updating template matcher."""
 
 from pathlib import Path
-from typing import Self, cast
+from typing import Self
 
 import numpy as np
 import torch
@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from spikeinterface.core import BaseRecording
 from torch import Tensor
 
-from ..templates import LowRankTemplates, TemplateData
+from ..templates import TemplateData
 from ..transform import WaveformPipeline
 from ..util.data_util import SpikeDataset
 from ..util.internal_config import (

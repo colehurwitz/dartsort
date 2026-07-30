@@ -33,21 +33,14 @@ def denoiser_time_shifts(
     waveforms: Tensor,
     channels: Tensor,
     voltages: Tensor,
-    subtract_rel_inds: Tensor | None,
+    subtract_rel_inds: Tensor,
     trough_offset_samples: int,
     spike_length_samples: int,
     peak_sign: "PeakSign",
     denoiser_realignment_shift: int,
-    denoiser_realignment_channel: Literal["detection", "denoised"],
 ) -> Tensor:
     # extract main channel traces
-    if denoiser_realignment_channel == "detection":
-        assert subtract_rel_inds is not None
-        main_channel_rel_inds = subtract_rel_inds[channels]
-    elif denoiser_realignment_channel == "denoised":
-        main_channel_rel_inds = ptp(waveforms).nan_to_num_(nan=-torch.inf).argmax(dim=1)
-    else:
-        panic(denoiser_realignment_channel)
+    main_channel_rel_inds = subtract_rel_inds[channels]
     denoised_main_channel_traces = waveforms.take_along_dim(
         dim=2, indices=main_channel_rel_inds[:, None, None]
     )
@@ -78,7 +71,6 @@ def denoiser_time_shifts(
 def check_residual_decrease(
     orig_wfs: Tensor | None,
     dn_wfs: Tensor,
-    decrease_objective: Literal["deconv", "norm", "normsq"] = "deconv",
     threshold=10.0,
     save_residnorm_decrease=False,
     overwrite_orig_waveforms: bool = False,
@@ -101,29 +93,16 @@ def check_residual_decrease(
         dn_wfs, channels, local_whiteners, whitening_kernel
     )
 
-    if decrease_objective == "deconv":
-        if overwrite_orig_waveforms:
-            buf = orig_wfs.mul_(dn_wfs)
-            conv = buf.sum(dim=1)
-            torch.square(dn_wfs, out=buf)
-            norm = buf.sum(dim=1)
-        else:
-            conv = (orig_wfs * dn_wfs).sum(dim=1)
-            norm = dn_wfs.square_().sum(dim=1)
-        reduction = conv.mul_(2.0).sub_(norm)
-        threshold = threshold**2
-    elif decrease_objective in ("norm", "normsq"):
-        orig_decobj = orig_wfs.square().sum(dim=1)
-        orig_wfs = orig_wfs.sub_(dn_wfs)
-        new_decobj = orig_wfs.square_().sum(dim=1)
-        if decrease_objective == "norm":
-            orig_decobj = orig_decobj.sqrt_()
-            new_decobj = new_decobj.sqrt_()
-        else:
-            threshold = threshold**2
-        reduction = orig_decobj - new_decobj
+    if overwrite_orig_waveforms:
+        buf = orig_wfs.mul_(dn_wfs)
+        conv = buf.sum(dim=1)
+        torch.square(dn_wfs, out=buf)
+        norm = buf.sum(dim=1)
     else:
-        panic(decrease_objective)
+        conv = (orig_wfs * dn_wfs).sum(dim=1)
+        norm = dn_wfs.square_().sum(dim=1)
+    reduction = conv.mul_(2.0).sub_(norm)
+    threshold = threshold**2
 
     keep = cast(torch.Tensor, threshold < reduction)
     (keep,) = keep.nonzero(as_tuple=True)
@@ -208,19 +187,16 @@ def subtract_chunk(
     peak_sign: PeakSign = "both",
     realign_to_denoiser=False,
     denoiser_realignment_shift=5,
-    denoiser_realignment_channel="detection",
     peak_channel_index: Tensor | None = None,
     dedup_channel_index: Tensor | None = None,
     subtract_rel_inds: Tensor | None = None,
     residnorm_decrease_threshold=16.0,
-    decrease_objective: Literal["norm", "normsq", "deconv"] = "deconv",
     local_whiteners: Tensor | None = None,
     whitening_kernel: Tensor | None = None,
     relative_peak_radius=5,
     dedup_temporal_radius=7,
     remove_exact_duplicates=True,
     pos_dedup_temporal_radius=None,
-    no_subtraction=False,
     max_iter=100,
     trough_priority: float | None = None,
     save_iteration=False,
@@ -228,36 +204,6 @@ def subtract_chunk(
     compute_collidedness=False,
 ) -> ChunkSubtractionResult:
     """Core peeling routine for subtraction"""
-    if no_subtraction:
-        threshold_res = threshold_chunk(
-            traces,
-            channel_index,
-            detection_threshold=detection_threshold,
-            peak_sign=peak_sign,
-            peak_channel_index=peak_channel_index,
-            dedup_channel_index=dedup_channel_index,
-            trough_offset_samples=trough_offset_samples,
-            spike_length_samples=spike_length_samples,
-            left_margin=left_margin,
-            right_margin=right_margin,
-            relative_peak_radius=relative_peak_radius,
-            temporal_dedup_radius_samples=dedup_temporal_radius,
-            remove_exact_duplicates=remove_exact_duplicates,
-            max_spikes_per_chunk=None,
-            quiet=False,
-        )
-        waveforms, features = denoising_pipeline(
-            threshold_res["waveforms"], channels=threshold_res["channels"]
-        )
-        return ChunkSubtractionResult(
-            n_spikes=threshold_res["n_spikes"],
-            times_samples=threshold_res["times_rel"],
-            channels=threshold_res["channels"],
-            collisioncleaned_waveforms=waveforms,
-            residual=None,
-            features=features,
-        )
-
     # validate arguments to avoid confusing error messages later
     re_extract = extract_index is not None
     if extract_index is None:
@@ -387,7 +333,6 @@ def subtract_chunk(
         resid_keep, new_feats = check_residual_decrease(
             original_waveforms,
             waveforms,
-            decrease_objective=decrease_objective,
             threshold=residnorm_decrease_threshold,
             save_residnorm_decrease=save_residnorm_decrease,
             local_whiteners=local_whiteners,
@@ -422,6 +367,7 @@ def subtract_chunk(
 
         # -- follow the nn's realignment advice, if requested
         if realign_to_denoiser:
+            assert subtract_rel_inds is not None
             features["time_shifts"] = denoiser_time_shifts(
                 waveforms=waveforms,
                 channels=channels,
@@ -431,7 +377,6 @@ def subtract_chunk(
                 spike_length_samples=spike_length_samples,
                 peak_sign=peak_sign,
                 denoiser_realignment_shift=denoiser_realignment_shift,
-                denoiser_realignment_channel=denoiser_realignment_channel,
             )
 
         # -- store this iter's outputs
