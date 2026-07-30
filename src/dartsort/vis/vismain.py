@@ -10,6 +10,7 @@ import numpy as np
 from dredge import motion_util
 from tqdm.auto import tqdm
 
+from ..clustering.agglomerate import deduplicate_spikes
 from ..evaluate.analysis import DARTsortAnalysis
 from ..evaluate.comparison import DARTsortGroundTruthComparison, DARTsortGTVersus
 from ..evaluate.hybrid_util import load_dartsort_step_sortings
@@ -43,6 +44,7 @@ def visualize_sorting(
     make_gt_overviews=True,
     make_unit_comparisons=True,
     make_mixture_summaries=None,
+    dedup_ms=0.0,
     make_versus=True,
     make_venns=True,
     analysis=None,
@@ -71,6 +73,12 @@ def visualize_sorting(
             sorting = DARTsortSorting.load(sorting_path)
         else:
             raise ValueError(f"Confusing {sorting_path=}")
+
+    if dedup_ms > 0:
+        try:
+            sorting = deduplicate_spikes(sorting, radius_ms=dedup_ms)
+        except ValueError as e:
+            print(e)
 
     try:
         if make_scatterplots:
@@ -275,6 +283,7 @@ def visualize_all_sorting_steps(
     motion_pkl="motion.pkl",
     channel_show_radius_um=50.0,
     amplitude_color_cutoff=15.0,
+    dedup_ms=0.0,
     pca_radius_um=75.0,
     exhaustive_gt=True,
     start_from_matching=False,
@@ -365,6 +374,7 @@ def visualize_all_sorting_steps(
                 make_mixture_summaries=make_mixture_summaries,
                 gt_analysis=gt_analysis,
                 other_analyses=other_analyses,
+                dedup_ms=dedup_ms,
                 n_units=n_units,
                 allow_qda=allow_qda,
                 single_unit_ids=single_unit_ids,
