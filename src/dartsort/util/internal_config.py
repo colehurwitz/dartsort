@@ -700,7 +700,7 @@ class SubtractionConfig:
     subtract_global_dedup: bool = True
     positive_temporal_dedup_radius_samples: int = 41
     subtract_radius_um: float = 200.0
-    residnorm_decrease_threshold: float = 7.0
+    residnorm_decrease_threshold: float = 9.0
     trough_priority: float | None = 2.0
     max_iter: int = 200
     whiten: bool = True
@@ -950,7 +950,7 @@ class DARTsortInternalConfig:
     detect_only: bool = False
     dredge_only: bool = False
     detection_type: Literal["subtract", "match", "threshold"] = "subtract"
-    preprocessing: PreprocessingStrategy = "none"
+    preprocessing: PreprocessingStrategy = "ibllikecmr"
     preprocessing_dtype: Literal["float16", "float32"] = "float32"
     matching_iterations: int = 1
     recluster_after_matching: bool = False
@@ -962,7 +962,7 @@ class DARTsortInternalConfig:
 
     # development / debugging flags
     work_in_tmpdir: bool = False
-    copy_recording_to_tmpdir: bool = False
+    copy_recording_to_tmpdir: Literal["yes", "no", "if_preprocessing"] = "if_preprocessing"
     workdir_follow_symlinks: bool = False
     workdir_copier: Literal["shutil", "rsync"] = "shutil"
     tmpdir_parent: str | None = None

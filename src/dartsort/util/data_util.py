@@ -583,11 +583,11 @@ class DARTsortSorting:
 
         with h5py.File(self.parent_h5_path, "r", libver="latest", locking=False) as h5:
             h5_keys = list(h5.keys())
-            if load_feature_names is None and load_all_features:
+            if load_all_features:
                 load_feature_names = [
                     k for k in h5_keys if h5[k].ndim > 0 and h5[k].shape[0] == n
                 ]
-            elif load_feature_names is None and load_simple_features:
+            elif load_simple_features:
                 load_feature_names = []
                 for k in h5_keys:
                     if k in already_loaded:
@@ -600,16 +600,18 @@ class DARTsortSorting:
                     if is_simple:
                         load_feature_names.append(k)
             elif load_feature_names is None:
-                load_feature_names = [k for k in h5_keys if self._no_check_needed(k)]
-            elif load_feature_names is not None:
-                basic_props = [k for k in h5_keys if self._no_check_needed(k)]
-                load_feature_names = list(load_feature_names) + basic_props
+                load_feature_names = []
 
-            assert load_feature_names is not None
+            # always load the basics
+            basic_props = [k for k in h5_keys if self._no_check_needed(k)]
+            load_feature_names = load_feature_names + basic_props
+
+            # deduplicate
             load_feature_names = [
                 k for k in load_feature_names if k not in already_loaded
             ]
             load_feature_names = list(set(load_feature_names))
+
             if allow_missing:
                 load_feature_names = [k for k in load_feature_names if k in h5]
             elif not all(k in h5 for k in load_feature_names):
@@ -1007,6 +1009,8 @@ class DARTsortSorting:
         if dataset_name in self._persistent_features:
             return True
         if self.parent_h5_path is None:
+            return False
+        if not self.parent_h5_path.exists():
             return False
         with h5py.File(self.parent_h5_path, "r", locking=False) as h5:
             return dataset_name in h5
@@ -1654,6 +1658,18 @@ def check_recording(
                 stacklevel=2,
             )
         failed = True
+
+    if log and not rec.binary_compatible_with(
+        file_offset=0, time_axis=0, file_paths_length=1
+    ):
+        warnings.warn(
+            "Your (preprocessed) recording is not saved on disk in time-major "
+            "format, so reading data could be slow. You could set the config "
+            "flag copy_recording_to_tmpdir to keep it in a scratch folder "
+            "while dartsort runs, or cache it long-term with its .save() method.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     return failed, avg_detections_per_second, max_abs, std
 

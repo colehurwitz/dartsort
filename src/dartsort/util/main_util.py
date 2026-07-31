@@ -1,13 +1,14 @@
 import json
 import shutil
+from collections.abc import Sequence
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
 from spikeinterface.core import BaseRecording
 
-from ..util.data_util import DARTsortSorting
+from ..util.data_util import DARTsortSorting, load
 from ..util.internal_config import (
     ClusteringConfig,
     ClusteringFeaturesConfig,
@@ -17,12 +18,35 @@ from ..util.internal_config import (
     RefinementConfig,
 )
 from ..util.logging_util import get_logger
-from ..util.py_util import dartcopy2, dartcopytree, ensure_path
+from ..util.py_util import dartcopy2, dartcopytree, ensure_path, panic
 
 if TYPE_CHECKING:
     from ..util.motion import MotionInfo
 
 logger = get_logger(__name__)
+
+
+class DARTsortResult(TypedDict):
+    sorting: DARTsortSorting
+    """Output spike trains."""
+    motion: "MotionInfo"
+    """Esimated motion"""
+
+
+def ds_load(output_dir: str | Path) -> DARTsortResult | None:
+    from ..util.motion import try_load_motion_info
+
+    output_dir = ensure_path(output_dir)
+    if not output_dir.exists():
+        return None
+
+    sorting_npz = output_dir / "dartsort_sorting.npz"
+    if not sorting_npz.exists():
+        return None
+    sorting = load(sorting_npz)
+    motion = try_load_motion_info(output_dir)
+    assert motion is not None
+    return {"sorting": sorting, "motion": motion}
 
 
 def ds_save_intermediate_sorting(
@@ -88,7 +112,7 @@ def ds_save_intermediate_labels(
 
 def ds_dump_config(internal_cfg: DARTsortInternalConfig, output_dir: Path):
     json_path = output_dir / "_dartsort_internal_config.json"
-    with open(json_path, "w") as jsonf:
+    with json_path.open("w") as jsonf:
         json.dump(asdict(internal_cfg), jsonf)
     logger.info(f"Recorded config to {json_path}.")
 
@@ -107,7 +131,16 @@ def ds_all_to_workdir(
     if work_dir is None:
         return recording, None
 
-    if recording is not None and internal_cfg.copy_recording_to_tmpdir:
+    if internal_cfg.copy_recording_to_tmpdir == "if_preprocessing":
+        copy_rec = internal_cfg.preprocessing != "none"
+    elif internal_cfg.copy_recording_to_tmpdir == "yes":
+        copy_rec = True
+    elif internal_cfg.copy_recording_to_tmpdir == "no":
+        copy_rec = False
+    else:
+        panic(internal_cfg.copy_recording_to_tmpdir)
+
+    if recording is not None and copy_rec:
         rec_dir = work_dir / rec_subdir
         logger.info(
             f"Writing recording to {rec_dir}. Parallelism is handled by "
@@ -417,5 +450,5 @@ def _matching_step_cfgs(
 def ds_save_timing(timings: dict[str, float], output_dir: Path):
     if (output_dir / "timing.json").exists():
         return
-    with open(output_dir / "timing.json", "w") as jsonf:
+    with (output_dir / "timing.json").open("w") as jsonf:
         json.dump(timings, jsonf)

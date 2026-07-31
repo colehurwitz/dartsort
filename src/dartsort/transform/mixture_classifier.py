@@ -222,7 +222,10 @@ class TruncatedMixtureModelTransformer(BaseWaveformFeaturizer):
         # build sorting object
         load_features = ["times_seconds", *self.load_feat_names]
         sorting = DARTsortSorting.from_peeling_hdf5(
-            h5_path=hdf5_filename, load_feature_names=load_features
+            h5_path=hdf5_filename,
+            load_feature_names=load_features,
+            load_all_features=False,
+            load_simple_features=False,
         )
         if sorting.labels is None:
             assert self.clustering_cfg is not None

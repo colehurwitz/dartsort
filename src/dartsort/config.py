@@ -96,7 +96,7 @@ class DARTsortUserConfig:
     work_in_tmpdir: bool = False
     """If True, dartsort will store all temporary data in a scratch directory in tmpdir_parent or TMPDIR."""
 
-    copy_recording_to_tmpdir: bool = False
+    copy_recording_to_tmpdir: Literal["yes", "no", "if_preprocessing"] = "if_preprocessing"
     """Save a copy of the preprocessed recording to a tmpdir?"""
 
     workdir_copier: Literal["shutil", "rsync"] = "shutil"
@@ -145,7 +145,7 @@ class DARTsortUserConfig:
     threshold in Kilosort and other sorters, and it represents reduction in
     Euclidean norm of standardized data due to matching a new event."""
 
-    initial_threshold: Annotated[float, Field(gt=0)] = 7.0
+    initial_threshold: Annotated[float, Field(gt=0)] = 9.0
     """Initial detection's neural net matching threshold. Same as
     matching_threshold, except that a neural net is trying to guess
     the true waveforms here, rather than using cluster templates."""

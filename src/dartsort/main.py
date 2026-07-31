@@ -4,7 +4,7 @@ import traceback
 from collections.abc import Sequence
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, TypedDict
+from typing import Any
 
 from dredge.motion_util import MotionEstimate
 from spikeinterface.core import BaseRecording, Motion
@@ -49,12 +49,14 @@ from .util.internal_config import (
 from .util.job_util import ensure_computation_config
 from .util.logging_util import get_logger
 from .util.main_util import (
+    DARTsortResult,
     _matching_step_cfgs,
     ds_all_to_workdir,
     ds_dump_config,
     ds_fast_forward,
     ds_handle_delete_intermediate_features,
     ds_handle_link_from,
+    ds_load,
     ds_save_features,
     ds_save_intermediate_labels,
     ds_save_motion,
@@ -71,13 +73,6 @@ from .util.torch_util import cleanup_and_log_gpu_usage
 logger = get_logger(__name__)
 
 
-class DARTsortResult(TypedDict):
-    sorting: DARTsortSorting
-    """Output spike trains."""
-    motion: MotionInfo
-    """Esimated motion"""
-
-
 def dartsort(
     recording: BaseRecording,
     output_dir: str | Path,
@@ -88,7 +83,7 @@ def dartsort(
     si_motion: Motion | None = None,
     dredge_motion_est: MotionEstimate | None = None,
     overwrite=False,
-):
+) -> DARTsortResult:
     """This function runs a spike sorter called *dartsort*.
 
     Parameters
@@ -122,6 +117,12 @@ def dartsort(
           - "motion": MotionInfo
     """
     output_dir = ensure_path(output_dir, mkdir=True)
+
+    # check if totally done (to avoid doing preprocessing)
+    # if not done, the sorter will still try to resume where it left off later
+    ds_res = ds_load(output_dir)
+    if ds_res is not None:
+        return ds_res
 
     # convert cfg to internal format and store it for posterity
     cfg = to_internal_config(cfg, recording.get_num_channels())

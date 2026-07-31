@@ -325,7 +325,7 @@ def visualize_all_sorting_steps(
     if step_sortings is None:
         step_sortings = load_dartsort_step_sortings(
             dartsort_dir,
-            load_simple_features=True,
+            load_simple_features=False,
             load_feature_names=fnames,
             name_formatter=step_name_formatter,
             **(load_step_sortings_kw or {}),
