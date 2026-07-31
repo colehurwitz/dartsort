@@ -800,7 +800,9 @@ class CovarianceView(MixtureComponentPlot):
         self.reference_cov = reference_cov
         self.min_chan_count = min_chan_count
 
-    def compute(self, mix_data: MixtureVisData, unit_id: int, channels: np.ndarray | None = None):
+    def compute(
+        self, mix_data: MixtureVisData, unit_id: int, channels: np.ndarray | None = None
+    ):
         # load data
         inu_train, wchans, features, _waveforms = mix_data.random_train_waveforms(
             unit_id=unit_id, count=self.n_waveforms_show
@@ -852,7 +854,9 @@ class CovarianceView(MixtureComponentPlot):
 
         # noise covariance
         assert mix_data.tmm.noise is not None
-        cov_noise = mix_data.tmm.noise.marginal_covariance(channels=target_chans).to_dense()
+        cov_noise = mix_data.tmm.noise.marginal_covariance(
+            channels=target_chans
+        ).to_dense()
         assert cov_noise.shape == cov_interp.shape
 
         # signal covariance
@@ -1134,7 +1138,9 @@ class SplitView(MixtureComponentPlot):
             for uid in group.tolist():
                 myl = kmeans_labels[orig_labels == uid]
                 uu, cc = myl.unique(return_counts=True)
-                cc = ",".join(f"{int(uuu)}:{int(ccc)}" for uuu, ccc in zip(uu, cc, strict=False))
+                cc = ",".join(
+                    f"{int(uuu)}:{int(ccc)}" for uuu, ccc in zip(uu, cc, strict=False)
+                )
                 cstrs.append(f"{uid}->[{cc}]")
             cstr = "orig->km: " + "\n      ".join(cstrs)
             txt += cstr + "\n"
@@ -1143,7 +1149,9 @@ class SplitView(MixtureComponentPlot):
             for uid in group.tolist():
                 myl = split_res.train_assignments[orig_labels == uid]
                 uu, cc = myl.unique(return_counts=True)
-                cc = ",".join(f"{int(uuu)}:{int(ccc)}" for uuu, ccc in zip(uu, cc, strict=False))
+                cc = ",".join(
+                    f"{int(uuu)}:{int(ccc)}" for uuu, ccc in zip(uu, cc, strict=False)
+                )
                 cstrs.append(f"{uid}->[{cc}]")
             cstr = "orig->sp: " + "\n      ".join(cstrs)
             txt += cstr + "\n"
@@ -1152,7 +1160,9 @@ class SplitView(MixtureComponentPlot):
             for uid in range(split_res.n_split):
                 myl = orig_labels[split_res.train_assignments.cpu() == uid]
                 uu, cc = np.unique(myl, return_counts=True)
-                cc = ",".join(f"{int(uuu)}:{int(ccc)}" for uuu, ccc in zip(uu, cc, strict=False))
+                cc = ",".join(
+                    f"{int(uuu)}:{int(ccc)}" for uuu, ccc in zip(uu, cc, strict=False)
+                )
                 cstrs.append(f"{uid}->[{cc}]")
             cstr = "sp->orig " + "\n      ".join(cstrs)
             txt += cstr + "\n"
@@ -1400,7 +1410,12 @@ def fit_mixture_for_vis(
     if em or split or merge or both:
         mix_data.tmm.em(mix_data.train_data)
     for _ in range(max(int(split), int(both))):
-        run_split(mix_data.tmm, train_data=mix_data.train_data, val_data=mix_data.val_data, prog_level=1)
+        run_split(
+            mix_data.tmm,
+            train_data=mix_data.train_data,
+            val_data=mix_data.val_data,
+            prog_level=1,
+        )
         mix_data.tmm.em(mix_data.train_data)
     if merge or both:
         run_merge(mix_data.tmm, mix_data.train_data, mix_data.val_data, prog_level=1)
@@ -1795,7 +1810,9 @@ def vis_split_interpolation(
         )
     maa = max([np.abs(w).max() for w in orig_wfs])
 
-    for col, iwf, owf, ochans, c in zip(axes, interp_wfs, orig_wfs, orig_chans, "rgb", strict=True):
+    for col, iwf, owf, ochans, c in zip(
+        axes, interp_wfs, orig_wfs, orig_chans, "rgb", strict=True
+    ):
         geomplot(
             waveforms=iwf,
             channels=kmeans_chans[None].broadcast_to(iwf.shape[0], *kmeans_chans.shape),

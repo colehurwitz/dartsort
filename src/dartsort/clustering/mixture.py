@@ -109,6 +109,7 @@ logger = get_logger(__name__)
 pnoid = logger.isEnabledFor(DARTSORTVERBOSE)
 prop_check_atol = 1e-3
 prop_check_rtol = 1e-5
+tiny = torch.finfo(torch.float32).tiny
 
 
 # -- main
@@ -2196,7 +2197,7 @@ class TruncatedMixtureModel(BaseMixtureModel):
         assert self.b.means.is_contiguous()
         if bases is not None:
             assert self.b.bases.is_contiguous()
-        self.eps = torch.tensor(torch.finfo(means.dtype).tiny, device=means.device)
+        self.eps = torch.tensor(tiny, device=means.device)
 
         # needs to be initialized before doing anything serious
         # see bootstrapping stage of initialize_and_bootstrap_tmm
@@ -6252,7 +6253,7 @@ def _fill_blank_labels(
     if keep_same_adj:
         adj = un_adj
     else:
-        adj = un_adj + explore_adj * torch.finfo(explore_adj.dtype).tiny
+        adj = un_adj + explore_adj * tiny
         uncovered = adj.sum(0).amin().cpu().item() == 0
         if uncovered:
             uncovered_adj = adj.clone()
@@ -6262,7 +6263,7 @@ def _fill_blank_labels(
         n_steps = -1
         for n_steps in range(min(int(uncovered), max_steps)):  # noqa: B007
             explore_adj = explore_adj @ neighb_adj
-            adj = un_adj + explore_adj * torch.finfo(explore_adj.dtype).tiny
+            adj = un_adj + explore_adj * tiny
             if adj.sum(0).min().cpu().item() > 0:
                 break
 
@@ -7379,7 +7380,7 @@ def _finalize_e_stats(
     Uhat_batch = means.new_ones((batch_size, hat_dim, hat_dim))
 
     # reweighting
-    denom = stats.N[lut.b.unit_ids].clamp_(min=torch.finfo(stats.N.dtype).tiny)
+    denom = stats.N[lut.b.unit_ids].clamp_(min=tiny)
     Nlut_N = torch.div(stats.Nlut, denom, out=denom)
     if pnoid:
         assert torch.isfinite(Nlut_N).all()
