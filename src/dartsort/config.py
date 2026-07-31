@@ -30,7 +30,7 @@ class DARTsortUserConfig:
     do_motion_estimation: bool = True
     """Set this to false if your data is super stable or already motion-corrected."""
 
-    preprocessing: PreprocessingStrategy = "ibllikecmr"
+    preprocessing: PreprocessingStrategy = "none"
     """If other than `'none'`, dartsort will apply some preprocessing to the
     recording. Leave as `'none'` if you are passing in an already-preprocesed
     recording. If so, be aware that dartsort expects its input to be standardized on

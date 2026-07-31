@@ -72,6 +72,7 @@ dartsort_result = dartsort.dartsort(
 ```
 
 **Please** read the [important configuration details section](#important-configuration-details) below for information on the parameters of the `DARTsortUserConfig`.
+In particular, you will most likely need to set the `preprocessing` flag.
 
 Here, `recording` is a [SpikeInterface][SpikeInterface] recording object (see their tutorial on [reading various recording formats](https://spikeinterface.readthedocs.io/en/stable/how_to/read_various_formats.html)).
 `output_dir` is the folder where _dartsort_ will save its output.
@@ -83,7 +84,8 @@ Once you've run _dartsort_, you might want to check out [the outputs and exporti
 
 Before running _dartsort_, please be aware of the following important configuration options.
 
-- `preprocessing`: _dartsort_'s default (`preprocessing="ibllikecmr"`) is a lightweight version of [the IBL's strategy][iblsorting], replacing their highpass spatial filter with a common median reference.
+- `preprocessing`: _dartsort_ doesn't preprocess your data by default (for now, `preprocessing="none"` by default), but this will change.
+    - An easy choice is `preprocessing="ibllikecmr"`, which is a lightweight version of [the IBL's strategy][iblsorting], replacing their highpass spatial filter with a common median reference.
     - If you've already preprocessed your data, use `"none"` instead, or `"standardize"` if your preprocessing did not include a standardization step.
     - An implementation of the full IBL strategy is available as `"ibllike"`.
 - The `copy_recording_to_tmpdir` controls whether the recording is copied to a scratch directory for faster reading. It can be `True`, `False`, or `"if_preprocessing"` (the default). By default the recording is cached if `preprocessing` is something other than `"none"`.

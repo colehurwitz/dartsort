@@ -950,7 +950,7 @@ class DARTsortInternalConfig:
     detect_only: bool = False
     dredge_only: bool = False
     detection_type: Literal["subtract", "match", "threshold"] = "subtract"
-    preprocessing: PreprocessingStrategy = "ibllikecmr"
+    preprocessing: PreprocessingStrategy = "none"
     preprocessing_dtype: Literal["float16", "float32"] = "float32"
     matching_iterations: int = 1
     recluster_after_matching: bool = False
