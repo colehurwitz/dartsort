@@ -32,16 +32,22 @@ def test_fakedata_nonn(tmp_path, sim_size, simulations, do_motion_estimation):
         save_intermediate_features=True,
         save_intermediate_labels=True,
         matching_iterations=0,
+        preprocessing="none",
     )
     res = dartsort.dartsort(sim_recording, output_dir=tmp_path, cfg=cfg)
+    assert res["sorting"].parent_h5_path is not None
     assert res["sorting"].parent_h5_path.exists()
     assert (tmp_path / "dartsort_sorting.npz").exists()
     assert (tmp_path / "subtraction.h5").exists()
     assert not (tmp_path / "matching1.h5").exists()
 
+    # delete the final output to trick ds into thinking it wasn't done
+    (tmp_path / "dartsort_sorting.npz").unlink()
+
     # test the fast-forward thing
     cfg1 = dataclasses.replace(cfg, matching_iterations=1)
     res = dartsort.dartsort(sim_recording, output_dir=tmp_path, cfg=cfg1)
+    assert res["sorting"].parent_h5_path is not None
     assert res["sorting"].parent_h5_path.exists()
     assert (tmp_path / "dartsort_sorting.npz").exists()
     assert (tmp_path / "subtraction.h5").exists()
@@ -49,6 +55,7 @@ def test_fakedata_nonn(tmp_path, sim_size, simulations, do_motion_estimation):
 
     # test the fast-forward thing again
     res = dartsort.dartsort(sim_recording, output_dir=tmp_path, cfg=cfg1)
+    assert res["sorting"].parent_h5_path is not None
     assert res["sorting"].parent_h5_path.exists()
     assert (tmp_path / "dartsort_sorting.npz").exists()
     assert (tmp_path / "subtraction.h5").exists()
@@ -96,8 +103,10 @@ def test_fakedata(tmp_path, sim_size, simulations, sdcfg):
         # test the dev tasks pipeline
         save_intermediate_labels=True,
         save_intermediate_features=False,
+        preprocessing="none",
     )
     res = dartsort.dartsort(sim_recording, output_dir=tmp_path, cfg=cfg)
+    assert res["sorting"].parent_h5_path is not None
     assert res["sorting"].parent_h5_path.exists()
     assert (tmp_path / "dartsort_sorting.npz").exists()
     assert not (tmp_path / "subtraction.h5").exists()
@@ -138,6 +147,7 @@ def test_initial_detection_swap(tmp_path, simulations, type):
         detection_type=type,
         precomputed_templates_npz=str(tmp_path / "temps.npz"),
         save_intermediates=True,
+        preprocessing="none",
         **cfg_add,  # type: ignore  # ty: ignore[x]
     )
     with warnings.catch_warnings():
@@ -145,6 +155,7 @@ def test_initial_detection_swap(tmp_path, simulations, type):
             "ignore", message="Can't extract this many non-overlapping snips."
         )
         res = dartsort.dartsort(sim["recording"], output_dir=tmp_path, cfg=cfg)
+        assert res["sorting"].parent_h5_path is not None
     assert res["sorting"].parent_h5_path.exists()
     if type.startswith("subtract"):
         h5_name = "subtraction"

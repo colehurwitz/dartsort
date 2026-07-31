@@ -4,7 +4,6 @@ import torch
 from test_util import dense_layout
 
 from dartsort.detect.detect import detect_and_deduplicate
-from dartsort.detect.detect_filters import convexity_filter
 from dartsort.util.waveform_util import make_channel_index
 
 
@@ -35,7 +34,7 @@ def test_detect_and_deduplicate(dedup_exact):
         torch.tensor(x),
         threshold=threshold,
         peak_sign="both",
-        dedup_channel_index=ci,
+        dedup_neighborhoods=ci,
         dedup_temporal_radius=dedup_t,
         remove_exact_duplicates=dedup_exact,
     )
@@ -48,7 +47,7 @@ def test_detect_and_deduplicate(dedup_exact):
         torch.tensor(x),
         threshold=threshold,
         peak_sign="pos",
-        dedup_channel_index=ci,
+        dedup_neighborhoods=ci,
         dedup_temporal_radius=dedup_t,
         remove_exact_duplicates=dedup_exact,
     )
@@ -59,7 +58,7 @@ def test_detect_and_deduplicate(dedup_exact):
         torch.tensor(x),
         threshold=threshold,
         peak_sign="neg",
-        dedup_channel_index=ci,
+        dedup_neighborhoods=ci,
         dedup_temporal_radius=dedup_t,
         remove_exact_duplicates=dedup_exact,
     )
@@ -228,12 +227,11 @@ emptyf = torch.tensor([], dtype=torch.float)
 dtps = 2 * [torch.long, torch.long, torch.float]
 
 
-@pytest.mark.parametrize("convexity_threshold", [None, 0.0])
 @pytest.mark.parametrize("peak_sign", ["pos", "neg", "both"])
 @pytest.mark.parametrize("case", detect_edgecases.keys())
-def test_detect_edgecases(case, peak_sign, convexity_threshold):
+def test_detect_edgecases(case, peak_sign):
     case_tcv = [
-        torch.tensor(x, dtype=dtp) for x, dtp in zip(detect_edgecases[case], dtps)
+        torch.tensor(x, dtype=dtp) for x, dtp in zip(detect_edgecases[case], dtps, strict=False)
     ]
     # run on gpu if pos
     if torch.cuda.is_available():
@@ -254,7 +252,7 @@ def test_detect_edgecases(case, peak_sign, convexity_threshold):
         traces,
         threshold=threshold,
         peak_sign=peak_sign,
-        dedup_channel_index=torch.tensor(dedup_channel_index, device=dev),
+        dedup_neighborhoods=torch.tensor(dedup_channel_index, device=dev),
         dedup_temporal_radius=dedup_dt,
         relative_peak_radius=peak_dt,
         return_energies=True,
@@ -262,10 +260,6 @@ def test_detect_edgecases(case, peak_sign, convexity_threshold):
     )
     assert len(res) == 3
     out_t, out_c, out_v = res
-    keep = convexity_filter(traces, out_t, out_c, threshold=convexity_threshold)
-    out_t = out_t[keep]
-    out_c = out_c[keep]
-    out_v = out_v[keep]
     print(f"{out_t=} {out_c=} {out_v.tolist()=}")
     if peak_sign == "neg":
         assert torch.equal(out_t, emptyi.to(dev))

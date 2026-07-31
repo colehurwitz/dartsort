@@ -872,6 +872,35 @@ def _argrelmax_dedup_mask(
     return x2
 
 
+@torch_compile
+def argrelmax_dedup_mask_no_thresh(
+    peak_radius: int = 1,
+    *,
+    x: Tensor,
+    dedup_radius: int,
+    arange: Tensor,
+    padding: int,
+):
+    nt = x.shape[0]
+    xv = x.clone()
+    x = x[None, None]
+    xv[: padding + 1].zero_()
+    xv[nt - padding - 1 :].zero_()
+    xv = xv[None, None]
+    x1, inds1 = F.max_pool1d_with_indices(
+        x, kernel_size=(2 * peak_radius + 1,), padding=(peak_radius,), stride=(1,)
+    )
+    x1.relu_()
+    remove1 = torch.logical_or(xv < x1, inds1 != arange)
+    x1.masked_fill_(remove1, 0.0)
+    x2, inds2 = F.max_pool1d_with_indices(
+        x1, kernel_size=(2 * dedup_radius + 1,), padding=(dedup_radius,), stride=(1,)
+    )
+    remove2 = torch.logical_or(x1 < x2, inds2 != arange)
+    x2.masked_fill_(remove2, 0.0)
+    x2 = x2[0, 0]
+    return x2
+
 _cdtypes = {torch.float32: torch.complex64, torch.float64: torch.complex128}
 
 

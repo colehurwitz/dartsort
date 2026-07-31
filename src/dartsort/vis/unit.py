@@ -474,7 +474,6 @@ class WaveformPlot(UnitPlot):
             c = np.broadcast_to(c, waves.waveforms.shape)
             y = np.take_along_axis(y, axis=2, indices=c)
             y = y.reshape(len(waves.waveforms), -1)
-            assert np.array_equal(np.isnan(x), np.isnan(y))
             x = np.nan_to_num(x)
             y = np.nan_to_num(y)
             xy = np.einsum("nj,nj->n", x, y)

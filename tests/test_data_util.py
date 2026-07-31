@@ -68,6 +68,7 @@ def test_check_recording():
         (RuntimeWarning, "Detected 53"),
         (RuntimeWarning, "Recording s"),
         (RuntimeWarning, "Recording v"),
+        (RuntimeWarning, "Your (prepr"),
     }
 
     assert warnings == expected

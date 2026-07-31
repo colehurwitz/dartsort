@@ -96,7 +96,7 @@ class DARTsortUserConfig:
     work_in_tmpdir: bool = False
     """If True, dartsort will store all temporary data in a scratch directory in tmpdir_parent or TMPDIR."""
 
-    copy_recording_to_tmpdir: bool = False
+    copy_recording_to_tmpdir: Literal["yes", "no", "if_preprocessing"] = "if_preprocessing"
     """Save a copy of the preprocessed recording to a tmpdir?"""
 
     workdir_copier: Literal["shutil", "rsync"] = "shutil"
@@ -145,7 +145,7 @@ class DARTsortUserConfig:
     threshold in Kilosort and other sorters, and it represents reduction in
     Euclidean norm of standardized data due to matching a new event."""
 
-    initial_threshold: Annotated[float, Field(gt=0)] = 7.0
+    initial_threshold: Annotated[float, Field(gt=0)] = 9.0
     """Initial detection's neural net matching threshold. Same as
     matching_threshold, except that a neural net is trying to guess
     the true waveforms here, rather than using cluster templates."""
@@ -248,7 +248,7 @@ class DeveloperConfig(DARTsortUserConfig):
     detection_type: Literal["subtract", "match", "threshold"] = "subtract"
     cluster_strategy: str = "dpc"
     refinement_strategy: str = "tmm"
-    recluster_after_first_matching: bool = False
+    recluster_after_matching: bool = False
 
     # general peeling
     n_waveforms_fit: int = 40_000
@@ -267,7 +267,9 @@ class DeveloperConfig(DARTsortUserConfig):
     use_nn_in_subtraction: bool = True
     whiten_in_subtraction: bool = True
     threshold_before_whitening: float = 10.0
+    shave_score: float = 10.0
     temporal_dedup_radius_samples: int = 7
+    subtract_global_dedup: bool = True
     positive_temporal_dedup_radius_samples: int = 41
     spikeinterface_merge_max_distance: float = 0.8
 
@@ -296,8 +298,6 @@ class DeveloperConfig(DARTsortUserConfig):
     whiten_estimator: WhiteningEstimator = "localzca"
     whiten_temporal_length: int | None = 3
     whiten_features: bool = False
-    matching_fp_control: bool = False
-    refractory_radius_frames: int = 0
     svd_alignment_iterations: int = 0
 
     # interpolation for features
@@ -312,8 +312,6 @@ class DeveloperConfig(DARTsortUserConfig):
     polyharmonic_order: int = 2
 
     # initial clustering
-    initial_euclidean_complete_only: bool = False
-    initial_cosine_complete_only: bool = False
     initial_amp_feat: bool = False
     initial_signed_amp_feat: bool = True
     initial_pc_feats: int = 5

@@ -36,12 +36,14 @@ import tempfile
 from itertools import product
 from typing import cast
 
+import h5py
 import numpy as np
 import pytest
 import torch
 
 import dartsort
 from dartsort.templates.realignment import trim_templates_to_shift
+from dartsort.util.data_util import load
 from dartsort.util.spiketorch import taper
 
 # constants
@@ -159,12 +161,9 @@ def test_denoiser_alignment(align_sim, align_templates):
     ]
     with tempfile.TemporaryDirectory() as tdir:
         tdir = dartsort.ensure_path(tdir)
-        st0, st1 = sts = [
-            dartsort.DARTsortSorting.from_peeling_hdf5(
-                p.peel(tdir / "hi.h5", overwrite=True)
-            )
-            for p in peelers
-        ]
+        st0 = load(peelers[0].peel(tdir / "hi0.h5"))
+        st1 = load(peelers[1].peel(tdir / "hi1.h5"))
+        sts = [st0, st1]
         wf0 = st0._load_dataset("collisioncleaned_waveforms")
         wf1 = st1._load_dataset("collisioncleaned_waveforms")
 
@@ -369,7 +368,6 @@ def test_matching_alignment_basic(align_sim, align_templates, matchtype):
             sampling_cfg=no_resid_sampling_cfg,
             featurization_cfg=dartsort.FeaturizationConfig(skip=True),
             matching_cfg=dartsort.MatchingConfig(
-                refractory_radius_frames=1,
                 up_factor=1,
                 template_type=matchtype,
                 up_method="keys4" if matchtype == "drifty" else "direct",
@@ -406,7 +404,7 @@ def match_test_sims():
             tshape -= tshape.min()
             assert tt.shape == tshape.shape == (121,)
         else:
-            assert False
+            pytest.fail(tempkind)
 
         assert tshape.argmax() == trough_offset
         # again, we'll create positive and negative versions

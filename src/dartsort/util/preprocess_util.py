@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import spikeinterface.full as si
 from spikeinterface.core import BaseRecording
@@ -85,10 +87,57 @@ def standardize(rec: BaseRecording, dtype: str) -> BaseRecording:
 preprocessing_strategies["standardize"] = standardize
 
 
+class DSPreprocessingWarning(UserWarning):
+    pass
+
+
+class DSPreprocessingError(ValueError):
+    pass
+
+
+def warn_about_preprocessing(
+    rec: BaseRecording,
+    strategy: PreprocessingStrategy = "none",
+):
+    from .data_util import check_recording
+
+    if strategy == "none" and rec.dtype.kind != "f":
+        raise DSPreprocessingError(
+            f"The input recording had data type {rec.dtype.name}, but "
+            "dartsort's preprocessing flag was set to 'none'. Please "
+            "set preprocessing to another strategy."
+        )
+
+    not_in_range, _, max_abs, std = check_recording(
+        rec=rec, log=False, count_spikes=False
+    )
+    in_range = not not_in_range
+
+    if strategy != "none" and in_range:
+        warnings.warn(
+            f"preprocessing was configured to '{strategy}', but recording values "
+            f"reach |{max_abs:0.2f}| with std dev {std:0.2f}, so the recording "
+            "looks like it may already have some preprocessing applied. Just a "
+            "heads up to give a chance to double check.",
+            DSPreprocessingWarning,
+            stacklevel=2,
+        )
+    if strategy == "none" and not_in_range:
+        warnings.warn(
+            f"preprocessing was configured to 'none', but recording values "
+            f"reach |{max_abs:0.2f}| with std dev {std:0.2f}, so the recording "
+            "looks like it was not preprocessed. Did you want to set the "
+            "preprocessing flag?",
+            DSPreprocessingWarning,
+            stacklevel=2,
+        )
+
+
 def preprocess(
     rec: BaseRecording,
     strategy: PreprocessingStrategy = "none",
     dtype: str = "float32",
 ) -> BaseRecording:
     logger.info("applying preprocessing: %s", strategy)
+    warn_about_preprocessing(rec=rec, strategy=strategy)
     return preprocessing_strategies[strategy](rec, dtype)

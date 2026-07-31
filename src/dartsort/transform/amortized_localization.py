@@ -43,7 +43,8 @@ class AmortizedLocalization(BaseWaveformFeaturizer):
         name_prefix="",
         n_epochs=100,
         learning_rate=3e-3,
-        batch_size=32,
+        batch_size=256,
+        fused_opt=True,
         inference_batch_size=2**14,
         norm_kind="layernorm",
         alpha_closed_form=True,
@@ -99,6 +100,7 @@ class AmortizedLocalization(BaseWaveformFeaturizer):
         self.random_seed = random_seed
         self.inference_batch_size = inference_batch_size
         self.nc = self.b.geom.shape[0]
+        self.fused_opt = fused_opt
 
         if self.nc > 1:
             self.register_buffer(
@@ -308,6 +310,7 @@ class AmortizedLocalization(BaseWaveformFeaturizer):
         del waveforms
         assert amps is not None
         amps = amps.to(device=my_dev)
+        channels = channels.to(device=my_dev)
 
         rg = np.random.default_rng(self.random_seed)
 
@@ -341,7 +344,9 @@ class AmortizedLocalization(BaseWaveformFeaturizer):
             )
         sampler = BatchSampler(sampler, batch_size=self.batch_size, drop_last=True)
         dataloader = DataLoader(dataset, sampler=sampler)
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+        optimizer = torch.optim.Adam(
+            self.parameters(), lr=self.learning_rate, fused=self.fused_opt
+        )
 
         val_dataset = TensorDataset(val_amps, val_channels)
         val_loader = DataLoader(val_dataset, batch_size=self.batch_size)

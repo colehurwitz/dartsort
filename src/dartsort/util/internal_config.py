@@ -691,22 +691,18 @@ class SubtractionConfig:
     detection_threshold: float = 3.0
     peak_sign: PeakSign = "both"
     realign_to_denoiser: bool = True
-    denoiser_realignment_channel: Literal["detection", "denoised"] = "detection"
     denoiser_realignment_shift: int = 5
     relative_peak_radius_samples: int = 5
     relative_peak_radius_um: float | None = 35.0
     spatial_dedup_radius_um: float | None = 50.0
     temporal_dedup_radius_samples: int = 7
     remove_exact_duplicates: bool = True
+    subtract_global_dedup: bool = True
     positive_temporal_dedup_radius_samples: int = 41
     subtract_radius_um: float = 200.0
-    residnorm_decrease_threshold: float = 7.0
-    decrease_objective: Literal["norm", "normsq", "deconv"] = "deconv"
-    growth_tolerance: float | None = None
+    residnorm_decrease_threshold: float = 9.0
     trough_priority: float | None = 2.0
-    convexity_threshold: float | None = None
-    convexity_radius: int = 7
-    max_iter: int = 100
+    max_iter: int = 200
     whiten: bool = True
     threshold_before_whitening: float = 10.0
     whiten_cfg: WhiteningConfig | None = WhiteningConfig(strategy="prewhiten_postapply")
@@ -752,8 +748,6 @@ class ThresholdingConfig:
     relative_peak_radius_samples: int = 5
     temporal_dedup_radius_samples: int = 11
     remove_exact_duplicates: bool = True
-    convexity_threshold: float | None = None
-    convexity_radius: int = 7
 
     thinning: float = 0.0
     time_jitter: int = 0
@@ -773,19 +767,15 @@ class MatchingConfig:
     coarse_cd: bool = True
 
     # template matching parameters
-    threshold: float | Literal["fp_control"] = 6.0
+    threshold: float = 6.0
     template_svd_compression_rank: int = 5
     template_svd_compression_min_explained_variance: float = 5e-3
     up_factor: int = 4
     upsampling_radius: int = 8
     template_min_channel_amplitude: float = 1.0
-    refractory_radius_frames: int = 0
     amplitude_scaling_variance: float = 0.01**2
     amplitude_scaling_boundary: float = 1.0 / 3.0
     max_iter: int = 100
-    conv_ignore_threshold: float = 0.0
-    coarse_approx_error_threshold: float = 0.0
-    coarse_objective: bool = True
     channel_selection: Literal["template", "amplitude"] = "template"
     channel_selection_radius: float | None = None
     template_type: Literal["individual_compressed_upsampled", "drifty", "debug"] = (
@@ -797,8 +787,7 @@ class MatchingConfig:
     whitening: WhiteningConfig = WhiteningConfig(strategy="prewhiten_postapply")
     whiten_features: bool = False
     margin_factor: int = 2
-    max_fp_per_input_spike: float = 2.5
-    scale_adjusts_threshold: bool = False
+    peak_dt: int = 3
 
     # template postprocessing parameters
     min_template_ptp: float = 1.0
@@ -855,7 +844,6 @@ class MotionEstimationConfig:
     tpca_rank: int = 8
     localization_radius_um: float = 100.0
     threshold_cfg: ThresholdingConfig = ThresholdingConfig()
-    spike_denoising_score: float = 10.0
 
 
 @cfg_dataclass
@@ -964,9 +952,8 @@ class DARTsortInternalConfig:
     detection_type: Literal["subtract", "match", "threshold"] = "subtract"
     preprocessing: PreprocessingStrategy = "none"
     preprocessing_dtype: Literal["float16", "float32"] = "float32"
-    final_refinement: bool = True
     matching_iterations: int = 1
-    recluster_after_first_matching: bool = False
+    recluster_after_matching: bool = False
     # subsampling: intermediate peels will continue until both criteria satisfied
     # need at least this many spikes
     subsampling_spikes_per_channel: int | None = 5000
@@ -975,7 +962,7 @@ class DARTsortInternalConfig:
 
     # development / debugging flags
     work_in_tmpdir: bool = False
-    copy_recording_to_tmpdir: bool = False
+    copy_recording_to_tmpdir: Literal["yes", "no", "if_preprocessing"] = "if_preprocessing"
     workdir_follow_symlinks: bool = False
     workdir_copier: Literal["shutil", "rsync"] = "shutil"
     tmpdir_parent: str | None = None
@@ -1101,6 +1088,8 @@ def to_internal_config(cfg, n_channels: int) -> DARTsortInternalConfig:
             subtract_radius_um=cfg.subtraction_radius_um,
             realign_to_denoiser=cfg.realign_to_denoiser,
             residnorm_decrease_threshold=cfg.initial_threshold,
+            threshold_before_whitening=cfg.threshold_before_whitening,
+            subtract_global_dedup=cfg.subtract_global_dedup,
             chunk_length_samples=cfg.chunk_length_samples,
             first_denoiser_thinning=cfg.first_denoiser_thinning,
             first_denoiser_max_waveforms_fit=cfg.nn_denoiser_max_waveforms_fit,
@@ -1133,7 +1122,6 @@ def to_internal_config(cfg, n_channels: int) -> DARTsortInternalConfig:
             template_type=cfg.matching_template_type,
             up_method=cfg.matching_up_method,
             template_min_channel_amplitude=cfg.matching_template_min_amplitude,
-            refractory_radius_frames=cfg.refractory_radius_frames,
             template_svd_compression_rank=cfg.matching_svd_rank,
             whitening=WhiteningConfig(),  # we don't know how to whiten yet
         )
@@ -1261,16 +1249,15 @@ def to_internal_config(cfg, n_channels: int) -> DARTsortInternalConfig:
         detection_threshold=cfg.motion_voltage_threshold,
         chunk_length_samples=cfg.chunk_length_samples,
         peak_sign=cfg.peak_sign,
-        shave_score=cfg.threshold_before_whitening,
+        shave_score=cfg.shave_score,
     )
     motion_estimation_cfg = MotionEstimationConfig(
         **motion_kw,
         tpca_rank=cfg.temporal_pca_rank,
         threshold_cfg=motion_threshold_cfg,
-        spike_denoising_score=cfg.threshold_before_whitening,
     )
     matching_cfg = MatchingConfig(
-        threshold="fp_control" if cfg.matching_fp_control else cfg.matching_threshold,
+        threshold=cfg.matching_threshold,
         amplitude_scaling_variance=cfg.amplitude_scaling_stddev**2,
         amplitude_scaling_boundary=cfg.amplitude_scaling_boundary,
         up_factor=cfg.temporal_upsamples,
@@ -1301,7 +1288,6 @@ def to_internal_config(cfg, n_channels: int) -> DARTsortInternalConfig:
         ),
         template_svd_compression_rank=cfg.matching_svd_rank,
         drift_interp_params=match_interp_params,
-        refractory_radius_frames=cfg.refractory_radius_frames,
     )
     computation_cfg = ComputationConfig(
         n_jobs_cpu=cfg.n_jobs_cpu,
@@ -1404,7 +1390,7 @@ def to_internal_config(cfg, n_channels: int) -> DARTsortInternalConfig:
         detection_type=cfg.detection_type,
         dredge_only=cfg.dredge_only,
         matching_iterations=cfg.matching_iterations,
-        recluster_after_first_matching=cfg.recluster_after_first_matching,
+        recluster_after_matching=cfg.recluster_after_matching,
         work_in_tmpdir=cfg.work_in_tmpdir,
         copy_recording_to_tmpdir=cfg.copy_recording_to_tmpdir,
         workdir_copier=cfg.workdir_copier,

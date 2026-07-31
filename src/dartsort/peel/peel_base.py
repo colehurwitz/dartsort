@@ -248,7 +248,7 @@ class BasePeeler(BModule):
             chunks_done = n_chunks_orig - chunks_remaining
             chunks_cover = int(np.ceil(ensure_coverage * n_chunks_orig))
             chunks_cover_remaining = chunks_cover - chunks_done
-            if chunks_cover_remaining == 0:
+            if chunks_cover_remaining <= 0:
                 assert resids_remaining == 0
                 residual_snips_per_chunk = None
             else:
@@ -523,7 +523,6 @@ class BasePeeler(BModule):
             return_waveforms=return_waveforms,
             chunk_start_samples=chunk_start_samples,
             chunk_end_samples=chunk_end_samples,
-            device=chunk.device,
             n_resid_snips=n_resid_snips,
         )
         return chunk_result
@@ -562,15 +561,13 @@ class BasePeeler(BModule):
         return_waveforms: bool,
         chunk_start_samples: int,
         chunk_end_samples: int,
-        device: torch.device,
         n_resid_snips: int | None,
     ):
         if peel_result["n_spikes"] > 0 and to_cpu:
             t_s = self.recording.sample_index_to_time(
                 peel_result["times_samples"].numpy(force=True)
             )
-            peel_result["times_seconds"] = torch.asarray(t_s, device=device)
-
+            peel_result["times_seconds"] = torch.asarray(t_s)
         if peel_result["n_spikes"] > 0 and return_waveforms:
             chunk_start_s = self.recording.sample_index_to_time(chunk_start_samples)
             chunk_end_s = self.recording.sample_index_to_time(chunk_end_samples)
@@ -802,17 +799,19 @@ class BasePeeler(BModule):
                     waveforms_dataset_name="peeled_waveforms_fit",
                     **fixed_properties,
                 )
-                if getrefcount(waveforms) > 2:
-                    logger.warning(f"Fit waveforms had {getrefcount(waveforms)=}")
-                    for obj in gc.get_referrers(waveforms):
-                        logger.warning(f"{obj!r}: {obj!s}")
                 featurization_pipeline = featurization_pipeline.to("cpu")
                 self.featurization_pipeline = featurization_pipeline
             finally:
                 self.to(device="cpu")
                 if temp_hdf5_filename.exists():
                     temp_hdf5_filename.unlink()
-                del waveforms, fixed_properties
+                del fixed_properties
+                gc.collect()
+                if getrefcount(waveforms) > 2:
+                    logger.warning(f"Fit waveforms had {getrefcount(waveforms)=}")
+                    for obj in gc.get_referrers(waveforms):
+                        logger.warning(f"{obj!r}: {obj!s}")
+                del waveforms
                 gc.collect()
 
     def get_chunk_starts(

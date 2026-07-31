@@ -52,6 +52,7 @@ class BaseMultichannelDenoiser(BaseWaveformDenoiser):
         scaling="max",
         signal_gates=True,
         step_callback=None,
+        fused_opt=True,
     ):
         super().__init__(
             geom=geom,
@@ -88,6 +89,7 @@ class BaseMultichannelDenoiser(BaseWaveformDenoiser):
         self.inference_batch_size = inference_batch_size
         self.epoch_size = epoch_size
         self.svd_projection_rank = svd_projection_rank
+        self.fused_opt = fused_opt
 
         model_channel_index = regularize_channel_index(
             geom=self.geom, channel_index=channel_index, depth_only=pad_depth_only
@@ -147,6 +149,8 @@ class BaseMultichannelDenoiser(BaseWaveformDenoiser):
         assert issubclass(opt, torch.optim.Optimizer)
         if okw is None:
             okw = {}
+        if "fused" not in okw and self.fused_opt:
+            okw["fused"] = True
         return opt(
             self.parameters(),
             lr=self.learning_rate,
@@ -421,9 +425,10 @@ class AOTIndicesInOrderBatchSampler(RefreshableSampler):
     def __iter__(self):
         if self.batch_size is None:
             yield from self.indices
-        for bs in range(0, self.n_examples, self.batch_size):
-            be = min(self.n_examples, self.batch_size)
-            yield self.indices[bs:be]
+        else:
+            for bs in range(0, self.n_examples, self.batch_size):
+                be = min(self.n_examples, bs + self.batch_size)
+                yield self.indices[bs:be]
 
 
 class AOTIndicesWeightedRandomBatchSampler(RefreshableSampler):
@@ -538,6 +543,7 @@ class AsyncBatchDataset(RefreshableDataset):
         chunk_size=2048,
         queue_chunks=8,
         n_workers=1,
+        pin_memory=False,
     ):
         super().__init__()
         self.spike_length_samples = spike_length_samples
@@ -552,6 +558,7 @@ class AsyncBatchDataset(RefreshableDataset):
         self.locals = local()
         self.locals.rg = None
         self.locals.generator = None
+        self.pin_memory = pin_memory
 
         self.chunk_size = chunk_size
         self._queue = Queue(maxsize=queue_chunks)
@@ -561,6 +568,7 @@ class AsyncBatchDataset(RefreshableDataset):
         self._cur_data_ix = None
         self._cur_chunk = None
         self._cur_chunk_ix = None
+        self._pin_buf = None
         self.bye = False
 
     def __len__(self):
@@ -613,6 +621,11 @@ class AsyncBatchDataset(RefreshableDataset):
         # need to batch up the chunks...
         if self._cur_chunk is None:
             self._cur_chunk = self._queue.get()
+            if self.pin_memory and self._pin_buf is None:
+                self._pin_buf = self._cur_chunk = self._cur_chunk.pin_memory()
+            elif self.pin_memory:
+                assert isinstance(self._pin_buf, torch.Tensor)
+                self._cur_chunk = self._pin_buf.copy_(self._cur_chunk)
             self._cur_chunk_ix = 0
         assert self._cur_chunk_ix is not None
 
@@ -689,6 +702,7 @@ class AsyncSameChannelNoiseDataset(AsyncBatchDataset):
         chunk_size=2048,
         queue_chunks=8,
         n_workers=1,
+        pin_memory=False,
     ):
         super().__init__(
             n_examples=len(channels) if channels is not None else torch.inf,
@@ -698,6 +712,7 @@ class AsyncSameChannelNoiseDataset(AsyncBatchDataset):
             chunk_size=chunk_size,
             queue_chunks=queue_chunks,
             n_workers=n_workers,
+            pin_memory=pin_memory,
         )
         self.channels = channels
         self.channel_index = channel_index
@@ -724,6 +739,7 @@ class AsyncSameChannelHDF5NoiseDataset(AsyncSameChannelNoiseDataset):
         count_name="n_residuals",
         memmap=True,
         memory=False,
+        pin_memory=False,
     ):
         super().__init__(
             channels=channels,
@@ -734,6 +750,7 @@ class AsyncSameChannelHDF5NoiseDataset(AsyncSameChannelNoiseDataset):
             rg=rg,
             queue_chunks=queue_chunks,
             n_workers=n_workers,
+            pin_memory=pin_memory,
         )
         if memory:
             with h5py.File(hdf5_filename, "r", locking=False) as h5:
@@ -793,6 +810,7 @@ class AsyncSameChannelRecordingNoiseDataset(AsyncSameChannelNoiseDataset):
         chunk_size=2048,
         queue_chunks=8,
         n_workers=1,
+        pin_memory=False,
     ):
         super().__init__(
             channels=channels,
@@ -802,6 +820,7 @@ class AsyncSameChannelRecordingNoiseDataset(AsyncSameChannelNoiseDataset):
             chunk_size=chunk_size,
             queue_chunks=queue_chunks,
             n_workers=n_workers,
+            pin_memory=pin_memory,
         )
         self.recording = recording
 

@@ -1,8 +1,10 @@
 import warnings
 from collections import namedtuple
+from collections.abc import Generator, Sequence
 from copy import copy
 from pathlib import Path
-from typing import TYPE_CHECKING, Generator, Literal, Self, Sequence, cast
+from threading import Lock
+from typing import TYPE_CHECKING, Literal, Self, cast
 
 import h5py
 import numba
@@ -39,6 +41,7 @@ from .py_util import ensure_path, panic
 from .waveform_util import make_channel_index
 
 logger = get_logger(__name__)
+_lock = Lock()
 
 # this is a data type used in the peeling code to store info about
 # the datasets which are being computed
@@ -66,7 +69,7 @@ class DARTsortSorting:
         channels: np.ndarray,
         labels: np.ndarray | None,
         parent_h5_path: str | Path | None = None,
-        sampling_frequency: float | int = 30000.0,
+        sampling_frequency: float = 30000.0,
         persistent_features: dict[str, np.ndarray] | None = None,
         ephemeral_features: dict[str, np.ndarray] | None = None,
     ):
@@ -92,12 +95,13 @@ class DARTsortSorting:
         self.labels = labels
 
         self._persistent_features: dict[str, np.ndarray] = {}
+        self._ephemeral_features: dict[str, np.ndarray] = {}
+
         if persistent_features is not None:
             for k, v in persistent_features.items():
                 check_shape = not self._no_check_needed(k)
                 self._register_persistent_feature(k, v, check_shape=check_shape)
 
-        self._ephemeral_features: dict[str, np.ndarray] = {}
         if ephemeral_features is not None:
             for k, v in ephemeral_features.items():
                 check_shape = not self._no_check_needed(k)
@@ -133,7 +137,7 @@ class DARTsortSorting:
     ) -> NumpySorting:
         """Clean up and produce a spikeinterface NumpySorting object."""
         if drop_doubles:
-            self = self.drop_doubles()
+            self = self.drop_doubles()  # noqa: PLW0642
         assert self.labels is not None
         st = self.drop_missing()
         assert st.labels is not None
@@ -438,6 +442,16 @@ class DARTsortSorting:
         if "_persistent_features" in self.__dict__:
             if name in self._persistent_features:
                 return self._persistent_features[name]
+        if "parent_h5_path" in self.__dict__ and self.parent_h5_path is not None:
+            # could be racey. re-check if another thread loaded this.
+            with _lock:
+                if "_persistent_features" in self.__dict__:
+                    if name in self._persistent_features:
+                        return self._persistent_features[name]
+                if self._has_dataset(name):
+                    feature = self._load_dataset(name)
+                    self._register_persistent_feature(name, feature, try_insert=False)
+                    return feature
         raise AttributeError
 
     def add_ephemeral_feature(
@@ -503,6 +517,7 @@ class DARTsortSorting:
         feature_name: str,
         feature: np.ndarray,
         check_shape: bool | None = None,
+        try_insert: bool = True,
     ):
         """Persistent features are written to the h5."""
         if self.parent_h5_path is None:
@@ -516,7 +531,14 @@ class DARTsortSorting:
             self._check_shape(feature_name, feature)
         if feature_name in self._persistent_features:
             raise ValueError(f"Persistent feature {feature_name} already exists.")
+        if feature_name in self._ephemeral_features:
+            raise ValueError(
+                f"Persistent feature {feature_name} was already ephemeral?"
+            )
         self._persistent_features[feature_name] = feature
+
+        if not try_insert:
+            return
 
         try:
             with h5py.File(
@@ -533,6 +555,74 @@ class DARTsortSorting:
             )
 
     # save / load
+
+    def load_persistent_features(
+        self,
+        times_samples_dataset="times_samples",
+        channels_dataset="channels",
+        labels_dataset="labels",
+        load_feature_names: Sequence[str] | None = None,
+        load_simple_features=True,
+        load_all_features=False,
+        allow_missing=False,
+    ):
+        if load_feature_names is not None:
+            load_feature_names = [str(fn) for fn in load_feature_names]
+        logger.dartsortdebug(
+            "Load features %s from %s", load_feature_names, self.parent_h5_path
+        )
+        n = self.n_spikes
+        already_loaded = [
+            times_samples_dataset,
+            channels_dataset,
+            labels_dataset,
+            "sampling_frequency",
+        ]
+        already_loaded.extend(self._persistent_features.keys())
+        already_loaded = set(already_loaded)
+
+        with h5py.File(self.parent_h5_path, "r", libver="latest", locking=False) as h5:
+            h5_keys = list(h5.keys())
+            if load_all_features:
+                load_feature_names = [
+                    k for k in h5_keys if h5[k].ndim > 0 and h5[k].shape[0] == n
+                ]
+            elif load_simple_features:
+                load_feature_names = []
+                for k in h5_keys:
+                    if k in already_loaded:
+                        continue
+                    if self._no_check_needed(k):
+                        load_feature_names.append(k)
+                        continue
+                    dset = cast(h5py.Dataset, h5[k])
+                    is_simple = 1 <= dset.ndim <= 2 and dset.shape[0] == n
+                    if is_simple:
+                        load_feature_names.append(k)
+            elif load_feature_names is None:
+                load_feature_names = []
+
+            # always load the basics
+            basic_props = [k for k in h5_keys if self._no_check_needed(k)]
+            load_feature_names = load_feature_names + basic_props
+
+            # deduplicate
+            load_feature_names = [
+                k for k in load_feature_names if k not in already_loaded
+            ]
+            load_feature_names = list(set(load_feature_names))
+
+            if allow_missing:
+                load_feature_names = [k for k in load_feature_names if k in h5]
+            elif not all(k in h5 for k in load_feature_names):
+                raise ValueError(
+                    f"Couldn't load datasets {','.join(k for k in load_feature_names if k not in h5)} from {self.parent_h5_path}."
+                )
+
+            for k in load_feature_names:
+                self._register_persistent_feature(
+                    feature_name=k, feature=h5[k][()], try_insert=False
+                )
 
     @classmethod
     def from_peeling_hdf5(
@@ -564,11 +654,10 @@ class DARTsortSorting:
             _lfn = []
         else:
             _lfn = [str(fn) for fn in load_feature_names]
-        logger.dartsortdebug("Read features %s from %s", _lfn, h5_path)
+        logger.dartsortdebug("Read sorting %s from %s", _lfn, h5_path)
 
         with h5py.File(h5_path, "r", libver="latest", locking=False) as h5:
             times_samples = cast(h5py.Dataset, h5[times_samples_dataset])[:]
-            n = times_samples.shape[0]
             channels = cast(h5py.Dataset, h5[channels_dataset])[:]
             sampling_frequency = float(
                 cast(h5py.Dataset, h5["sampling_frequency"])[()].item()
@@ -577,53 +666,26 @@ class DARTsortSorting:
                 labels = cast(h5py.Dataset, h5[labels_dataset])[:]
             else:
                 labels = None
+            _lfn.extend([k for k in h5 if cls._no_check_needed(k) and k not in _lfn])
 
-            already_loaded = [
-                times_samples_dataset,
-                channels_dataset,
-                labels_dataset,
-                "sampling_frequency",
-            ]
-            h5_keys = list(h5.keys())
-            if load_feature_names is None and load_all_features:
-                load_feature_names = [
-                    k for k in h5_keys if h5[k].ndim > 0 and h5[k].shape[0] == n
-                ]
-            elif load_feature_names is None and load_simple_features:
-                load_feature_names = []
-                for k in h5_keys:
-                    if k in already_loaded:
-                        continue
-                    if cls._no_check_needed(k):
-                        load_feature_names.append(k)
-                        continue
-                    dset = cast(h5py.Dataset, h5[k])
-                    is_simple = 1 <= dset.ndim <= 2 and dset.shape[0] == n
-                    if is_simple:
-                        load_feature_names.append(k)
-            elif load_feature_names is None:
-                load_feature_names = [k for k in h5_keys if cls._no_check_needed(k)]
-            elif load_feature_names is not None:
-                basic_props = [k for k in h5_keys if cls._no_check_needed(k)]
-                load_feature_names = list(load_feature_names) + basic_props
-            assert load_feature_names is not None
-            load_feature_names = [
-                k for k in load_feature_names if k not in already_loaded
-            ]
-            if allow_missing:
-                load_feature_names = [k for k in load_feature_names if k in h5]
-            persistent_features = {
-                k: cast(h5py.Dataset, h5[k])[:] for k in load_feature_names
-            }
-
-        return cls(
+        self = cls(
             times_samples=times_samples,
             channels=channels,
             labels=labels,
             sampling_frequency=sampling_frequency,
-            persistent_features=persistent_features,
             parent_h5_path=h5_path,
         )
+        if _lfn or load_simple_features or load_all_features:
+            self.load_persistent_features(
+                times_samples_dataset=times_samples_dataset,
+                channels_dataset=channels_dataset,
+                labels_dataset=labels_dataset,
+                load_feature_names=_lfn,
+                load_simple_features=load_simple_features,
+                load_all_features=load_all_features,
+                allow_missing=allow_missing,
+            )
+        return self
 
     def save(
         self,
@@ -948,6 +1010,8 @@ class DARTsortSorting:
             return True
         if self.parent_h5_path is None:
             return False
+        if not self.parent_h5_path.exists():
+            return False
         with h5py.File(self.parent_h5_path, "r", locking=False) as h5:
             return dataset_name in h5
 
@@ -1176,7 +1240,7 @@ def load_stored_tsvd(
     else:
         assert not trim_rank_to
     logger.info(
-        "Loaded stored basis from %s (%s; components shape: %s).",
+        "Loaded stored basis from %s (components shape: %s).",
         tsvd_name,
         tsvd.components_.shape,
     )
@@ -1494,16 +1558,19 @@ def candidates_to_labels(clabels, labels, Klabel, Kcand):
 
 
 def check_recording(
-    rec,
+    rec: BaseRecording,
     threshold=5,
     dedup_spatial_radius=75,
     expected_value_range=1e4,
+    count_spikes=True,
     too_few_spikes_per_sec=10,
     expected_spikes_per_sec=10_000,
-    num_chunks_per_segment=5,
+    num_chunks_per_segment=25,
     max_std=10.0,
     min_std=0.1,
     dtype=torch.float,
+    seed=0,
+    log=True,
 ):
     """Sanity check spike detection rate and data range of input recording."""
 
@@ -1513,32 +1580,38 @@ def check_recording(
         num_chunks_per_segment=num_chunks_per_segment,
         chunk_size=min(rec.get_num_samples(), int(rec.sampling_frequency)),
         concatenated=False,
+        seed=seed,
     )
-    dedup_channel_index = None
-    if dedup_spatial_radius:
+    if count_spikes and dedup_spatial_radius:
         dedup_channel_index = make_channel_index(
             rec.get_channel_locations(), dedup_spatial_radius
         )
+    else:
+        dedup_channel_index = None
 
     # run detection and compute spike detection rate and data range
     spike_rates = []
     max_abs = -np.inf
     mads = []
     for chunk in random_chunks:
-        dres = detect_and_deduplicate(
-            torch.tensor(chunk, dtype=dtype),
-            threshold=threshold,
-            peak_sign="both",
-            dedup_channel_index=torch.tensor(dedup_channel_index),
-        )
-        times = dres[0]
-        del dres
-        chunk_len_s = rec.sampling_frequency / chunk.shape[0]
-        spike_rates.append(times.shape[0] / chunk_len_s)
+        if count_spikes:
+            dres = detect_and_deduplicate(
+                torch.tensor(chunk, dtype=dtype),
+                threshold=threshold,
+                peak_sign="both",
+                dedup_neighborhoods=torch.tensor(dedup_channel_index),
+            )
+            times = dres[0]
+            del dres
+            chunk_len_s = rec.sampling_frequency / chunk.shape[0]
+            spike_rates.append(times.shape[0] / chunk_len_s)
         max_abs = max(max_abs, np.max(chunk))
         mads.append(np.median(np.abs(chunk)))
 
-    avg_detections_per_second = np.mean(spike_rates)
+    if count_spikes:
+        avg_detections_per_second = np.mean(spike_rates)
+    else:
+        avg_detections_per_second = -1.0
     std = np.mean(mads).item() * 1.4826
 
     err_tail = (
@@ -1550,39 +1623,55 @@ def check_recording(
     )
 
     failed = False
-    if avg_detections_per_second > expected_spikes_per_sec:
-        warnings.warn(
-            f"Detected {avg_detections_per_second:0.1f} spikes/s, which is large. "
-            + err_tail,
-            RuntimeWarning,
-            stacklevel=2,
-        )
+    if count_spikes and avg_detections_per_second > expected_spikes_per_sec:
+        if log:
+            warnings.warn(
+                f"Detected {avg_detections_per_second:0.1f} spikes/s, which is large. "
+                + err_tail,
+                RuntimeWarning,
+                stacklevel=2,
+            )
         failed = True
-    if avg_detections_per_second < too_few_spikes_per_sec:
-        warnings.warn(
-            f"Detected {avg_detections_per_second:0.1f} spikes/s, which is small."
-            + err_tail,
-            RuntimeWarning,
-            stacklevel=2,
-        )
+    if count_spikes and avg_detections_per_second < too_few_spikes_per_sec:
+        if log:
+            warnings.warn(
+                f"Detected {avg_detections_per_second:0.1f} spikes/s, which is small."
+                + err_tail,
+                RuntimeWarning,
+                stacklevel=2,
+            )
         failed = True
     if max_abs > expected_value_range:
-        warnings.warn(
-            f"Recording values exceed |{expected_value_range}|. " + err_tail,
-            RuntimeWarning,
-            stacklevel=2,
-        )
+        if log:
+            warnings.warn(
+                f"Recording values exceed |{expected_value_range}|. " + err_tail,
+                RuntimeWarning,
+                stacklevel=2,
+            )
         failed = True
     if std > max_std or std < min_std:
+        if log:
+            warnings.warn(
+                f"Recording standard deviation {std:0.2f} was not in the generous "
+                f"expected range [{min_std}, {max_std}]. " + err_tail,
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        failed = True
+
+    if log and not rec.binary_compatible_with(
+        file_offset=0, time_axis=0, file_paths_length=1
+    ):
         warnings.warn(
-            f"Recording standard deviation {std:0.2f} was not in the generous "
-            f"expected range [{min_std}, {max_std}]. " + err_tail,
+            "Your (preprocessed) recording is not saved on disk in time-major "
+            "format, so reading data could be slow. You could set the config "
+            "flag copy_recording_to_tmpdir to keep it in a scratch folder "
+            "while dartsort runs, or cache it long-term with its .save() method.",
             RuntimeWarning,
             stacklevel=2,
         )
-        failed = True
 
-    return failed, avg_detections_per_second, max_abs
+    return failed, avg_detections_per_second, max_abs, std
 
 
 def subset_sorting_by_spike_count(sorting, min_spikes=0, max_spikes=np.inf):
@@ -1989,7 +2078,7 @@ def fit_reweighting(
         if h5 is not None:
             voltages: np.ndarray = h5[voltages_dataset_name][:]
         elif hdf5_path is not None:
-            with h5py.File(hdf5_path) as h5:
+            with h5py.File(hdf5_path) as h5:  # noqa: PLR1704
                 voltages: np.ndarray = h5[voltages_dataset_name][:]
         else:
             panic()

@@ -4,7 +4,7 @@ import traceback
 from collections.abc import Sequence
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, TypedDict
+from typing import Any
 
 from dredge.motion_util import MotionEstimate
 from spikeinterface.core import BaseRecording, Motion
@@ -49,12 +49,14 @@ from .util.internal_config import (
 from .util.job_util import ensure_computation_config
 from .util.logging_util import get_logger
 from .util.main_util import (
+    DARTsortResult,
     _matching_step_cfgs,
     ds_all_to_workdir,
     ds_dump_config,
     ds_fast_forward,
     ds_handle_delete_intermediate_features,
     ds_handle_link_from,
+    ds_load,
     ds_save_features,
     ds_save_intermediate_labels,
     ds_save_motion,
@@ -71,13 +73,6 @@ from .util.torch_util import cleanup_and_log_gpu_usage
 logger = get_logger(__name__)
 
 
-class DARTsortResult(TypedDict):
-    sorting: DARTsortSorting
-    """Output spike trains."""
-    motion: MotionInfo
-    """Esimated motion"""
-
-
 def dartsort(
     recording: BaseRecording,
     output_dir: str | Path,
@@ -88,7 +83,7 @@ def dartsort(
     si_motion: Motion | None = None,
     dredge_motion_est: MotionEstimate | None = None,
     overwrite=False,
-):
+) -> DARTsortResult:
     """This function runs a spike sorter called *dartsort*.
 
     Parameters
@@ -123,6 +118,12 @@ def dartsort(
     """
     output_dir = ensure_path(output_dir, mkdir=True)
 
+    # check if totally done (to avoid doing preprocessing)
+    # if not done, the sorter will still try to resume where it left off later
+    ds_res = ds_load(output_dir)
+    if ds_res is not None:
+        return ds_res
+
     # convert cfg to internal format and store it for posterity
     cfg = to_internal_config(cfg, recording.get_num_channels())
     ds_dump_config(cfg, output_dir)
@@ -133,6 +134,7 @@ def dartsort(
 
     # preprocess
     recording = preprocess(recording, cfg.preprocessing, cfg.preprocessing_dtype)
+    check_recording(recording)
 
     if cfg.work_in_tmpdir:
         with TemporaryDirectory(prefix="dartsort", dir=cfg.tmpdir_parent) as work_dir:
@@ -166,7 +168,7 @@ def dartsort(
                 error_data_path = output_dir / "error_state"
                 with traceback_path.open("w") as f:
                     traceback.print_exception(e, file=f)
-                logger.exception()
+                logger.exception(e)
                 if cfg.save_everything_on_error:
                     logger.critical(
                         f"Hit an error. Copying outputs to {error_data_path} "
@@ -198,7 +200,7 @@ def dartsort(
         traceback_path = output_dir / "traceback.txt"
         with traceback_path.open("w") as f:
             traceback.print_exception(e, file=f)
-        logger.exception()
+        logger.exception(e)
         logger.critical(f"Hit an error. Wrote traceback to {traceback_path}.")
         raise
 
@@ -348,9 +350,14 @@ def _dartsort_impl(
         else:
             _nspk = cfg.subsampling_spikes_per_channel * motion.geom.shape[0]
         _pres = 1.0 if is_final else cfg.subsampling_presence
-        step_clus_cfg, step_clfeat_cfg, step_ref_cfgs, step_feat_cfg, samp_cfg = (
-            _matching_step_cfgs(is_final, is_subsampling, cfg)
-        )
+        (
+            step_clus_cfg,
+            step_clfeat_cfg,
+            step_ref_cfgs,
+            step_feat_cfg,
+            samp_cfg,
+            will_refine,
+        ) = _matching_step_cfgs(is_final, is_subsampling, cfg)
 
         logger.dartsortdebug(f"-- Matching {step}")
         with timer(f"matching{step}", ret["timing"]):
@@ -373,12 +380,10 @@ def _dartsort_impl(
                 previous_detection_cfg=previous_detection_cfg,
                 prev_step_name=f"refined{step - 1}",
                 save_cfg=cfg,
+                load_simple_features=will_refine,
             )
         logger.info(f"Matching step {step}: {sorting}")
         ds_save_features(cfg, sorting, output_dir, work_dir, is_final)
-
-        if is_final and not cfg.final_refinement:
-            break
 
         with timer(f"cluster{step}", ret["timing"]):
             if step_clus_cfg or (step_ref_cfgs is not None and len(step_ref_cfgs)):
@@ -428,6 +433,7 @@ def initial_detection(
     motion: MotionInfo | None = None,
     overwrite=False,
     show_progress=True,
+    load_simple_features: bool = True,
 ) -> DARTsortSorting:
     """Initial spike detection
 
@@ -467,6 +473,7 @@ def initial_detection(
             ensure_coverage=cfg.subsampling_presence,
             overwrite=overwrite,
             show_progress=show_progress,
+            load_simple_features=load_simple_features,
         )
     elif cfg.detection_type == "threshold":
         assert isinstance(cfg.initial_detection_cfg, ThresholdingConfig)
@@ -482,6 +489,7 @@ def initial_detection(
             overwrite=overwrite,
             show_progress=show_progress,
             computation_cfg=cfg.computation_cfg,
+            load_simple_features=load_simple_features,
         )
     elif cfg.detection_type == "match":
         assert isinstance(cfg.initial_detection_cfg, MatchingConfig)
@@ -499,6 +507,7 @@ def initial_detection(
             overwrite=overwrite,
             show_progress=show_progress,
             computation_cfg=cfg.computation_cfg,
+            load_simple_features=load_simple_features,
         )
     else:
         raise ValueError(f"Unknown detection_type {cfg.detection_type}.")
@@ -521,10 +530,10 @@ def subtract(
     show_progress=True,
     hdf5_filename="subtraction.h5",
     model_subdir="subtraction_models",
+    load_simple_features: bool = True,
 ) -> DARTsortSorting:
     output_dir = ensure_path(output_dir)
     computation_cfg = ensure_computation_config(computation_cfg)
-    check_recording(recording)
     subtraction_peeler = SubtractionPeeler.from_config(
         recording=recording,
         sampling_cfg=sampling_cfg,
@@ -547,6 +556,7 @@ def subtract(
         stop_after_n_spikes=stop_after_n_spikes,
         ensure_coverage=ensure_coverage,
         shuffle=shuffle,
+        load_simple_features=load_simple_features,
     )
 
     del subtraction_peeler
@@ -582,6 +592,7 @@ def match(
     computation_cfg: ComputationConfig | None = None,
     template_denoising_tsvd=None,
     whitener: Whitener | None = None,
+    load_simple_features: bool = True,
 ) -> DARTsortSorting:
     output_dir = ensure_path(output_dir)
     model_dir = output_dir / model_subdir
@@ -649,6 +660,7 @@ def match(
         skip_resid_snips=skip_resid_snips,
         show_progress=show_progress,
         computation_cfg=computation_cfg,
+        load_simple_features=load_simple_features,
     )
 
     del matching_peeler
@@ -710,6 +722,7 @@ def threshold(
     hdf5_filename="threshold.h5",
     model_subdir="threshold_models",
     computation_cfg: ComputationConfig | None = None,
+    load_simple_features: bool = True,
 ) -> DARTsortSorting:
     output_dir = ensure_path(output_dir)
     computation_cfg = ensure_computation_config(computation_cfg)
@@ -734,6 +747,7 @@ def threshold(
         overwrite=overwrite,
         show_progress=show_progress,
         computation_cfg=computation_cfg,
+        load_simple_features=load_simple_features,
     )
 
     del thresholder
