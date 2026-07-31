@@ -48,15 +48,19 @@ You can use `conda-forge` to install Python, `dartsort`, and its dependencies as
 
 ## Usage
 
+**Please** read the [important configuration details section](#important-configuration-details) below for information on the parameters of the `DARTsortUserConfig`.
+In particular, you will most likely need to set the `preprocessing` flag.
+
 For more detailed documentation of the main function parameters and configuration options, see the [main API documentation](main_api.md).
 
 ### As a Python function
 
-_dartsort_ can be run in Python with:
+_dartsort_ can be run in Python with (for example):
 
 ```python
 import dartsort
 
+# if the default settings make sense for you...
 dartsort.dartsort(recording, output_dir)
 
 # or, to set configuration options, something like...
@@ -66,13 +70,10 @@ dartsort_result = dartsort.dartsort(
     cfg=dartsort.DARTsortUserConfig(
         preprocessing="ibllike",
         work_in_tmpdir=True,
-        copy_recording_to_tmpdir=True,
+        copy_recording_to_tmpdir="yes",
     ),
 )
 ```
-
-**Please** read the [important configuration details section](#important-configuration-details) below for information on the parameters of the `DARTsortUserConfig`.
-In particular, you will most likely need to set the `preprocessing` flag.
 
 Here, `recording` is a [SpikeInterface][SpikeInterface] recording object (see their tutorial on [reading various recording formats](https://spikeinterface.readthedocs.io/en/stable/how_to/read_various_formats.html)).
 `output_dir` is the folder where _dartsort_ will save its output.
