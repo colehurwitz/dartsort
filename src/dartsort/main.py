@@ -133,6 +133,7 @@ def dartsort(
 
     # preprocess
     recording = preprocess(recording, cfg.preprocessing, cfg.preprocessing_dtype)
+    check_recording(recording)
 
     if cfg.work_in_tmpdir:
         with TemporaryDirectory(prefix="dartsort", dir=cfg.tmpdir_parent) as work_dir:
@@ -532,7 +533,6 @@ def subtract(
 ) -> DARTsortSorting:
     output_dir = ensure_path(output_dir)
     computation_cfg = ensure_computation_config(computation_cfg)
-    check_recording(recording)
     subtraction_peeler = SubtractionPeeler.from_config(
         recording=recording,
         sampling_cfg=sampling_cfg,

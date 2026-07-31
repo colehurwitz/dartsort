@@ -1554,16 +1554,19 @@ def candidates_to_labels(clabels, labels, Klabel, Kcand):
 
 
 def check_recording(
-    rec,
+    rec: BaseRecording,
     threshold=5,
     dedup_spatial_radius=75,
     expected_value_range=1e4,
+    count_spikes=True,
     too_few_spikes_per_sec=10,
     expected_spikes_per_sec=10_000,
-    num_chunks_per_segment=5,
+    num_chunks_per_segment=25,
     max_std=10.0,
     min_std=0.1,
     dtype=torch.float,
+    seed=0,
+    log=True,
 ):
     """Sanity check spike detection rate and data range of input recording."""
 
@@ -1573,32 +1576,38 @@ def check_recording(
         num_chunks_per_segment=num_chunks_per_segment,
         chunk_size=min(rec.get_num_samples(), int(rec.sampling_frequency)),
         concatenated=False,
+        seed=seed,
     )
-    dedup_channel_index = None
-    if dedup_spatial_radius:
+    if count_spikes and dedup_spatial_radius:
         dedup_channel_index = make_channel_index(
             rec.get_channel_locations(), dedup_spatial_radius
         )
+    else:
+        dedup_channel_index = None
 
     # run detection and compute spike detection rate and data range
     spike_rates = []
     max_abs = -np.inf
     mads = []
     for chunk in random_chunks:
-        dres = detect_and_deduplicate(
-            torch.tensor(chunk, dtype=dtype),
-            threshold=threshold,
-            peak_sign="both",
-            dedup_neighborhoods=torch.tensor(dedup_channel_index),
-        )
-        times = dres[0]
-        del dres
-        chunk_len_s = rec.sampling_frequency / chunk.shape[0]
-        spike_rates.append(times.shape[0] / chunk_len_s)
+        if count_spikes:
+            dres = detect_and_deduplicate(
+                torch.tensor(chunk, dtype=dtype),
+                threshold=threshold,
+                peak_sign="both",
+                dedup_neighborhoods=torch.tensor(dedup_channel_index),
+            )
+            times = dres[0]
+            del dres
+            chunk_len_s = rec.sampling_frequency / chunk.shape[0]
+            spike_rates.append(times.shape[0] / chunk_len_s)
         max_abs = max(max_abs, np.max(chunk))
         mads.append(np.median(np.abs(chunk)))
 
-    avg_detections_per_second = np.mean(spike_rates)
+    if count_spikes:
+        avg_detections_per_second = np.mean(spike_rates)
+    else:
+        avg_detections_per_second = -1.0
     std = np.mean(mads).item() * 1.4826
 
     err_tail = (
@@ -1610,39 +1619,43 @@ def check_recording(
     )
 
     failed = False
-    if avg_detections_per_second > expected_spikes_per_sec:
-        warnings.warn(
-            f"Detected {avg_detections_per_second:0.1f} spikes/s, which is large. "
-            + err_tail,
-            RuntimeWarning,
-            stacklevel=2,
-        )
+    if count_spikes and avg_detections_per_second > expected_spikes_per_sec:
+        if log:
+            warnings.warn(
+                f"Detected {avg_detections_per_second:0.1f} spikes/s, which is large. "
+                + err_tail,
+                RuntimeWarning,
+                stacklevel=2,
+            )
         failed = True
-    if avg_detections_per_second < too_few_spikes_per_sec:
-        warnings.warn(
-            f"Detected {avg_detections_per_second:0.1f} spikes/s, which is small."
-            + err_tail,
-            RuntimeWarning,
-            stacklevel=2,
-        )
+    if count_spikes and avg_detections_per_second < too_few_spikes_per_sec:
+        if log:
+            warnings.warn(
+                f"Detected {avg_detections_per_second:0.1f} spikes/s, which is small."
+                + err_tail,
+                RuntimeWarning,
+                stacklevel=2,
+            )
         failed = True
     if max_abs > expected_value_range:
-        warnings.warn(
-            f"Recording values exceed |{expected_value_range}|. " + err_tail,
-            RuntimeWarning,
-            stacklevel=2,
-        )
+        if log:
+            warnings.warn(
+                f"Recording values exceed |{expected_value_range}|. " + err_tail,
+                RuntimeWarning,
+                stacklevel=2,
+            )
         failed = True
     if std > max_std or std < min_std:
-        warnings.warn(
-            f"Recording standard deviation {std:0.2f} was not in the generous "
-            f"expected range [{min_std}, {max_std}]. " + err_tail,
-            RuntimeWarning,
-            stacklevel=2,
-        )
+        if log:
+            warnings.warn(
+                f"Recording standard deviation {std:0.2f} was not in the generous "
+                f"expected range [{min_std}, {max_std}]. " + err_tail,
+                RuntimeWarning,
+                stacklevel=2,
+            )
         failed = True
 
-    return failed, avg_detections_per_second, max_abs
+    return failed, avg_detections_per_second, max_abs, std
 
 
 def subset_sorting_by_spike_count(sorting, min_spikes=0, max_spikes=np.inf):
