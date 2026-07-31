@@ -2416,6 +2416,7 @@ class TruncatedMixtureModel(BaseMixtureModel):
         valid = torch.tensor([r is not None for r in initialization], dtype=torch.bool)
         initialization = [r for r in initialization if r is not None]
         responsibilities = responsibilities[:, valid]
+        chan_coverage = chan_coverage[:, valid]
         K = responsibilities.shape[1]
 
         fdim = noise.rank * noise.n_channels
