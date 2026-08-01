@@ -2,9 +2,10 @@
 
 import traceback
 from collections.abc import Sequence
+from importlib.metadata import version
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, cast
 
 from dredge.motion_util import MotionEstimate
 from spikeinterface.core import BaseRecording, Motion
@@ -71,6 +72,7 @@ from .util.py_util import dartcopytree, ensure_path, panic, timer
 from .util.torch_util import cleanup_and_log_gpu_usage
 
 logger = get_logger(__name__)
+tag = f"{__package__} {version(cast(str, __package__))}    >>-===-- ((@))"
 
 
 def dartsort(
@@ -117,6 +119,7 @@ def dartsort(
           - "motion": MotionInfo
     """
     output_dir = ensure_path(output_dir, mkdir=True)
+    logger.info(tag)
 
     # check if totally done (to avoid doing preprocessing)
     # if not done, the sorter will still try to resume where it left off later

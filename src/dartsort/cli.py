@@ -21,7 +21,7 @@ def dartsort_cli():
     assert dartsort_cli.__doc__ is not None
     ap = argparse.ArgumentParser(
         prog="dartsort",
-        epilog=dartsort_cli.__doc__.split("---")[1],
+        epilog=main.tag + "\n\n" + dartsort_cli.__doc__.split("---")[1],
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     ap.add_argument("recording", help="Path to SpikeInterface RecordingExtractor.")

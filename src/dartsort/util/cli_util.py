@@ -2,10 +2,10 @@
 import types
 import typing
 from argparse import ArgumentParser, BooleanOptionalAction, _StoreAction
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import _MISSING_TYPE, MISSING, asdict, field, fields
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 from annotated_types import Ge, Gt, Le, Lt
 from typing_extensions import Doc
