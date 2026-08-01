@@ -266,7 +266,7 @@ def get_noise(
     channels,
     channel_index,
     spike_length_samples=121,
-    rg: int | None | np.random.Generator = 0,
+    rg: int | np.random.Generator | None = 0,
     generator: torch.Generator | None = None,
 ):
     if rg is not None:
@@ -585,7 +585,7 @@ class AsyncBatchDataset(RefreshableDataset):
             while True:
                 try:
                     self._queue.get()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     break
             for th in self._threads:
                 th.join()

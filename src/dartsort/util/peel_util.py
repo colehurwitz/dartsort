@@ -190,7 +190,7 @@ def peeler_is_done(
         (
             done,
             output_hdf5_filename,
-            next_batch_start,
+            _next_batch_start,
         ) = check_resume_or_overwrite(
             output_hdf5_filename,
             localization_dataset_name,

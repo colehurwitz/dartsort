@@ -13,6 +13,7 @@ from ...util.logging_util import DARTSORTVERBOSE, get_logger
 from ...util.motion import MotionInfo
 from ...util.py_util import databag, panic
 from ...util.spiketorch import (
+    _nonzero_static,
     argrelmax_dedup,
     argrelmax_dedup_mask_no_thresh,
     grab_spikes,
@@ -427,7 +428,7 @@ class ChunkTemplateData:
             padding=padding + exclude_extra_padding,
         )
         max_peaks = ceil(nt / self.filter_length_samples)
-        peaks = mask.nonzero_static(size=max_peaks)
+        peaks = _nonzero_static(mask, size=max_peaks)
         valid = peaks >= 0
 
         # scaled refinement
