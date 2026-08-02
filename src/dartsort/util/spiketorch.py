@@ -114,7 +114,7 @@ def ptp(waveforms, dim=1, keepdims=False):
 
 if TORCH_IS_OLD:
 
-    def _nonzero_static(x: Tensor, size: int, *, le_ok=False):
+    def _nonzero_static(x: Tensor, size: int, le_ok=False):
         nz = x.nonzero()
         if le_ok:
             assert nz.shape[0] <= size
@@ -123,7 +123,7 @@ if TORCH_IS_OLD:
         return nz
 else:
 
-    def _nonzero_static(x: Tensor, size: int, *, le_ok=False):
+    def _nonzero_static(x: Tensor, size: int, le_ok=False):
         return x.nonzero_static(size=size)
 
 
