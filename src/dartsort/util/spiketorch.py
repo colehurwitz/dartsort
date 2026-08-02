@@ -114,7 +114,7 @@ def ptp(waveforms, dim=1, keepdims=False):
 
 if TORCH_IS_OLD:
 
-    def _nonzero_static(x: Tensor, size: int, le_ok=False):
+    def _nonzero_static(x: Tensor, size: int, le_ok: bool = False):
         nz = x.nonzero()
         if le_ok:
             assert nz.shape[0] <= size
@@ -123,7 +123,7 @@ if TORCH_IS_OLD:
         return nz
 else:
 
-    def _nonzero_static(x: Tensor, size: int, le_ok=False):
+    def _nonzero_static(x: Tensor, size: int, le_ok: bool = False):
         return x.nonzero_static(size=size)
 
 
@@ -903,6 +903,7 @@ def argrelmax_dedup_mask_no_thresh(
     x2.masked_fill_(remove2, 0.0)
     x2 = x2[0, 0]
     return x2
+
 
 _cdtypes = {torch.float32: torch.complex64, torch.float64: torch.complex128}
 
