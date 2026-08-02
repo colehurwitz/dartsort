@@ -428,7 +428,7 @@ class ChunkTemplateData:
             padding=padding + exclude_extra_padding,
         )
         max_peaks = ceil(nt / self.filter_length_samples)
-        peaks = _nonzero_static(mask, size=max_peaks)
+        peaks = _nonzero_static(mask, size=max_peaks, le_ok=True)
         valid = peaks >= 0
 
         # scaled refinement
