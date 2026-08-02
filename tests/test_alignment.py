@@ -36,7 +36,6 @@ import tempfile
 from itertools import product
 from typing import cast
 
-import h5py
 import numpy as np
 import pytest
 import torch

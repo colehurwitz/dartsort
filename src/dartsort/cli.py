@@ -105,4 +105,4 @@ def dartsort_cli():
 
     # -- run
     # TODO: maybe this script should dump to Phy?
-    ret = main.dartsort(rec, output_dir, cfg=cfg, overwrite=args.overwrite)
+    main.dartsort(rec, output_dir, cfg=cfg, overwrite=args.overwrite)

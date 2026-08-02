@@ -1005,7 +1005,7 @@ def nancov(
             cov = enforce_posdef(cov, eps=eps)
         except Exception as e:
             if not cov.isfinite().all():
-                raise e
+                raise
             else:
                 warnings.warn(
                     f"Error in nancov's eigh, shown below, was ignored because the covariance remained finite. {e}",
@@ -1611,7 +1611,6 @@ def reindex(
     already_padded=False,
     pad_value=torch.nan,
 ):
-    """"""
     rel_ix = relative_index[max_channels].unsqueeze(1)
     if not already_padded:
         source_waveforms = F.pad(source_waveforms, (0, 1), value=pad_value)
