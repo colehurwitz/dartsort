@@ -862,7 +862,7 @@ def combine_gmm_scores(
     )
 
 
-@numba.njit(parallel=True)
+@numba.njit(parallel=True, nogil=True)
 def _combine_loop(
     cand: np.ndarray,
     new_id_counts: np.ndarray,
@@ -970,7 +970,7 @@ def deduplicate_spikes(
     return sorting.ephemeral_replace(labels=new_labels)
 
 
-def _dedup_unit(
+def dedup_unit(
     t: np.ndarray, dt: np.ndarray, scores: np.ndarray, radius: int
 ) -> np.ndarray:
     """Deduplicate a single unit's spike train."""
@@ -979,7 +979,7 @@ def _dedup_unit(
     return discard
 
 
-@numba.njit
+@numba.njit(nogil=True)
 def _dedup_unit_loop(
     dt: np.ndarray, scores: np.ndarray, radius: int, discard: np.ndarray
 ):
@@ -1129,7 +1129,7 @@ def coentropy(
     )
 
 
-@numba.njit(parallel=True)
+@numba.njit(parallel=True, nogil=True)
 def _calc_coentropy(
     coentropy: np.ndarray,
     cooccurrence: np.ndarray,
