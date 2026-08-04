@@ -32,29 +32,32 @@ logger = get_logger(__name__)
 class SimpleMatrixFeatures:
     n: int
     features: np.ndarray
-    x: np.ndarray | None
-    z: np.ndarray | None
-    z_reg: np.ndarray | None
-    xyza: np.ndarray | None
-    signed_amplitudes: np.ndarray
-    amplitudes: np.ndarray
-    keep_mask: np.ndarray | None
+    x: np.ndarray | None = None
+    z: np.ndarray | None = None
+    z_reg: np.ndarray | None = None
+    xyza: np.ndarray | None = None
+    signed_amplitudes: np.ndarray | None = None
+    amplitudes: np.ndarray | None = None
+    keep_mask: np.ndarray | None = None
 
-    def mask(self, mask) -> Self:
-        a = self.amplitudes[mask]
+    def mask(self, mask: np.ndarray) -> Self:
+        if mask.dtype.kind == "b":
+            mask = np.flatnonzero(mask)
         if self.keep_mask is not None:
             k = self.keep_mask[mask]
         else:
             k = None
         return self.__class__(
-            n=a.shape[0],
+            n=mask.shape[0],
             features=self.features[mask],
             x=None if self.x is None else self.x[mask],
             z=None if self.z is None else self.z[mask],
             z_reg=None if self.z_reg is None else self.z_reg[mask],
             xyza=None if self.xyza is None else self.xyza[mask],
-            signed_amplitudes=self.signed_amplitudes[mask],
-            amplitudes=a,
+            signed_amplitudes=None
+            if self.signed_amplitudes is None
+            else self.signed_amplitudes[mask],
+            amplitudes=None if self.amplitudes is None else self.amplitudes[mask],
             keep_mask=k,
         )
 
@@ -67,6 +70,9 @@ class SimpleMatrixFeatures:
         clustering_features_cfg: ClusteringFeaturesConfig = default_clustering_features_cfg,
         computation_cfg: ComputationConfig | None = None,
     ) -> Self:
+        if clustering_features_cfg.skip:
+            return cls(n=len(sorting), features=np.zeros((len(sorting), 0)))
+
         computation_cfg = ensure_computation_config(computation_cfg)
         t_s = sorting.times_seconds
         xyza = getattr(
@@ -380,4 +386,4 @@ def _check_numbers(name: str, x: np.ndarray, raise_for_numerics=False):
     if raise_for_numerics:
         raise ValueError(err)
     else:
-        logger.warn(err)
+        logger.warning(err)

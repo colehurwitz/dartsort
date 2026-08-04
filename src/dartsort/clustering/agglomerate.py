@@ -11,7 +11,11 @@ from spikeinterface.core import BaseRecording
 
 from ..templates.template_util import shared_basis_compress_templates
 from ..templates.templates import TemplateData
-from ..util.data_util import DARTsortSorting
+from ..util.data_util import (
+    DARTsortSorting,
+    count_not_sorted,
+    pos_int_unique_and_counts,
+)
 from ..util.internal_config import (
     ComputationConfig,
     RefinementConfig,
@@ -72,7 +76,7 @@ def agglomerate(
 
     if template_data is None:
         did_flatten = True
-        sorting = sorting.flatten(include_gmm_properties=True)
+        sorting = sorting.flatten(include_gmm_properties=True, in_place=True)
     else:
         did_flatten = False
 
@@ -108,7 +112,7 @@ def agglomerate(
                 link=template_merge_cfg.linkage,
             )
         elif not did_flatten:
-            agg_sorting = sorting.flatten(include_gmm_properties=True)
+            agg_sorting = sorting.flatten(include_gmm_properties=True, in_place=True)
             new_ids = None
         else:
             agg_sorting = sorting
@@ -117,7 +121,9 @@ def agglomerate(
         if refinement_cfg is not None:
             agg_sorting = deduplicate_spikes(agg_sorting, refinement_cfg.dedup_ms)
 
-        agg_sorting, reorder = reorder_by_depth(agg_sorting, motion=motion)
+        agg_sorting, reorder = reorder_by_depth(
+            agg_sorting, motion=motion, in_place=True, is_flat=True
+        )
         if new_ids is None:
             new_ids = reorder
         else:
@@ -241,7 +247,7 @@ def agglomerate(
 
     agg_sorting = deduplicate_spikes(agg_sorting, refinement_cfg.dedup_ms)
 
-    agg_sorting, reorder = reorder_by_depth(agg_sorting, motion=motion)
+    agg_sorting, reorder = reorder_by_depth(agg_sorting, motion=motion, in_place=True)
     new_ids = reorder[np.unique(new_ids, return_inverse=True)[1]]
 
     return Agglomeration(
@@ -932,7 +938,10 @@ def deduplicate_spikes(
     new_labels = sorting.labels.copy()
     scores = None
     for sck in score_by:
-        scores = getattr(sorting, sck, None)
+        if not sorting._has_dataset(sck):
+            continue
+        sl = (slice(None), 0) if sck.endswith("log_liks") else ()
+        scores = sorting._load_dataset(sck, sl=sl)
         if scores is not None:
             logger.dartsortdebug(f"deduplicate by score {sck}")
             break
@@ -944,16 +953,20 @@ def deduplicate_spikes(
     assert scores.shape == new_labels.shape
 
     # handle unsorted times
-    tsort = np.argsort(sorting.times_samples)
-    new_labels = new_labels[tsort]
-    times_samples = sorting.times_samples[tsort]
-    scores = scores[tsort]
+    if count_not_sorted(sorting.times_samples) > 0:
+        tsort = np.argsort(sorting.times_samples, kind="stable")
+        new_labels = new_labels[tsort]
+        times_samples = sorting.times_samples[tsort]
+        scores = scores[tsort]
+    else:
+        times_samples = sorting.times_samples
+        tsort = None
 
-    unit_ids = np.unique(new_labels)
-    unit_ids = unit_ids[unit_ids >= 0]
+    unit_ids, _, _ = pos_int_unique_and_counts(new_labels)
     ndrop = 0
+    unit_mask_tmp = np.empty(new_labels.shape, dtype=np.bool)
     for unit_id in unit_ids:
-        in_unit = np.flatnonzero(new_labels == unit_id)
+        in_unit = np.flatnonzero(np.equal(new_labels, unit_id, out=unit_mask_tmp))
         if in_unit.size <= 1:
             continue
         t = times_samples[in_unit]
@@ -965,7 +978,8 @@ def deduplicate_spikes(
         new_labels[in_unit[discard]] = -1
 
     logger.dartsortdebug(f"drop {ndrop}/{len(sorting)} isi violator spikes")
-    new_labels = new_labels[np.argsort(tsort)]
+    if tsort is not None:
+        new_labels = new_labels[np.argsort(tsort)]
 
     return sorting.ephemeral_replace(labels=new_labels)
 

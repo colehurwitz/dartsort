@@ -41,7 +41,7 @@ def argfield(
 
 
 def fieldnames(cls):
-    return set(f.name for f in fields(cls))
+    return {f.name for f in fields(cls)}
 
 
 def manglefieldset(name):
@@ -77,7 +77,7 @@ def field_annot_str(field):
         elif isinstance(tp, Le):
             constrs.append(f"<= {tp.le}")
         else:
-            raise ValueError(f"Haven't implemented {tp} annotation.")
+            raise TypeError(f"Haven't implemented {tp} annotation.")
     return ", ".join(constrs)
 
 

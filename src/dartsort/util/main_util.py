@@ -444,6 +444,13 @@ def _matching_step_cfgs(
         feat_cfg = cfg.featurization_cfg
         samp_cfg = cfg.peeler_sampling_cfg
 
+    # in the common case where we're just agglomerating at the end,
+    # skip the whole clustering features business
+    if clus_cfg is None and all(
+        rc is None or rc.refinement_strategy == "agglomerate" for rc in ref_cfgs
+    ):
+        clfeat_cfg = replace(clfeat_cfg, skip=True)
+
     return clus_cfg, clfeat_cfg, ref_cfgs, feat_cfg, samp_cfg, will_refine
 
 

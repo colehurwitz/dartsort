@@ -432,7 +432,6 @@ def gmm_isolation_scores(
         initializer=_iso_init,
         initargs=(ctx,),
     ) as pool:
-        unit_ids = unit_ids
         isolation = np.full(unit_ids.size, np.nan)
         domain = None
         kdes = None
@@ -482,7 +481,6 @@ class _GMMIsolationContext:
 
 
 def _iso_init(ctx):
-    global _iso_ctx
     _iso_ctx.ctx = ctx
 
 

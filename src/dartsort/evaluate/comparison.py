@@ -300,7 +300,7 @@ class DARTsortGroundTruthComparison:
                 tested_units.update(self.relevant_tested_units(gt_unit_id=gt_unit_id))
             return tested_units
         ag = self.agreement_scores.loc[gt_unit_id]
-        return ag.index[ag.values >= threshold]
+        return ag.index[ag.array >= threshold]
 
     def unit_collidedness(self):
         uids = self.gt_analysis.sorting.unit_ids
@@ -334,7 +334,7 @@ class DARTsortGroundTruthComparison:
                 if udt.size:
                     match_dt_rms[j] = np.sqrt(np.square(udt).mean())
             except ValueError as e:
-                warnings.warn(f"ValueError in misalignment. SI matching bug. {e=}")
+                warnings.warn(f"ValueError in misalignment. SI matching bug. {e=}", stacklevel=2)
         return match_dt_rms
 
     def matched_misalignment(self, gt_unit_id):
@@ -395,11 +395,11 @@ class DARTsortGroundTruthComparison:
 
         (
             dists,
-            shifts,
-            snrs_a,
-            snrs_b,
-            a_mask,
-            b_mask,
+            _shifts,
+            _snrs_a,
+            _snrs_b,
+            _a_mask,
+            _b_mask,
         ) = merge.cross_match_distance_matrix(
             self.gt_analysis.coarse_template_data,
             self.tested_analysis.coarse_template_data,
@@ -477,7 +477,7 @@ class DARTsortGroundTruthComparison:
                 warnings.warn(
                     f"Strange match sizes for {gt_unit=} {tested_unit=}: "
                     f"{matched_gt_indices.shape=} {matched_tested_indices.shape=} "
-                    f"{matched_tested_mask.sum()=}"
+                    f"{matched_tested_mask.sum()=}", stacklevel=2
                 )
         else:
             matched_tested_indices = np.zeros(shape=(0,), dtype=np.int64)
@@ -531,18 +531,18 @@ class DARTsortGroundTruthComparison:
                 self.gt_analysis.sorting.labels[self.gt_si_inds] == gt_unit_id
             ]
             gt_labels = self.comparison.get_labels1(gt_unit_id)[0]
-            assert gt_labels.shape == in_gt_unit.shape, 1
+            assert gt_labels.shape == in_gt_unit.shape
 
             in_tested_unit = self.tested_si_inds[
                 self.tested_analysis.sorting.labels[self.tested_si_inds]
                 == tested_unit_id
             ]
             tested_labels = self.comparison.get_labels2(tested_unit_id)[0]
-            assert tested_labels.shape == in_tested_unit.shape, 2
+            assert tested_labels.shape == in_tested_unit.shape
 
             gt_tp_ix = in_gt_unit[gt_labels == "TP"]
             tested_tp_ix = in_tested_unit[tested_labels == "TP"]
-            assert gt_tp_ix.shape == tested_tp_ix.shape, 3
+            assert gt_tp_ix.shape == tested_tp_ix.shape
 
             tested_index_of_gt[gt_tp_ix] = tested_tp_ix
             gt_index_of_tested[tested_tp_ix] = gt_tp_ix
@@ -572,15 +572,15 @@ class DARTsortGroundTruthComparison:
             gtix = gtfn_index_of_testedfn[testedix]
             testedfn_index_of_gtfn[gtix] = testedix
 
-            assert tested_fn.shape == gtfn_index_of_testedfn.shape, 1
-            assert gt_fn.shape == testedfn_index_of_gtfn.shape, 2
+            assert tested_fn.shape == gtfn_index_of_testedfn.shape
+            assert gt_fn.shape == testedfn_index_of_gtfn.shape
             tmask = testedfn_index_of_gtfn >= 0
             tested_index_of_gt[gt_fn[tmask]] = testedfn_index_of_gtfn[tmask]
 
             gmask = gtfn_index_of_testedfn >= 0
             gt_index_of_tested[tested_fn[gmask]] = gtfn_index_of_testedfn[gmask]
         else:
-            assert False
+            assert False  # noqa: B011
         return tested_index_of_gt, gt_index_of_tested
 
     def get_greedy_correspondence_in_si_match(self):

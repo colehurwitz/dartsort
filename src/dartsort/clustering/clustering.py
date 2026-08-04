@@ -1,5 +1,6 @@
 import gc
-from typing import TYPE_CHECKING, Literal, Self, Sequence, cast
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Literal, Self, cast
 
 import numpy as np
 import sklearn.cluster

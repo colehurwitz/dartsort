@@ -245,6 +245,8 @@ default_clustering_fit_sampling_cfg = FitSamplingConfig(
 class ClusteringFeaturesConfig:
     """Parameters to control which features are used for initial clustering"""
 
+    skip: bool = False
+
     # simple matrix feature controls
     use_x: bool = True
     use_z: bool = True

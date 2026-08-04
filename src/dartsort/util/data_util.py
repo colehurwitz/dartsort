@@ -133,7 +133,7 @@ class DARTsortSorting:
         return d
 
     def to_numpy_sorting(
-        self, drop_doubles=True, return_kept_indices: bool = False
+        self, drop_doubles: bool = False, return_kept_indices: bool = False
     ) -> NumpySorting:
         """Clean up and produce a spikeinterface NumpySorting object."""
         if drop_doubles:
@@ -141,8 +141,13 @@ class DARTsortSorting:
         assert self.labels is not None
         st = self.drop_missing()
         assert st.labels is not None
-        order = np.argsort(st.times_samples, kind="stable")
-        labels = st.labels[order]
+        is_sorted = count_not_sorted(st.times_samples) == 0
+        if is_sorted:
+            order = slice(None)
+            labels = st.labels
+        else:
+            order = np.argsort(st.times_samples, kind="stable")
+            labels = st.labels[order]
         numpy_sorting = NumpySorting.from_samples_and_labels(
             samples_list=st.times_samples[order],
             labels_list=labels,
@@ -150,8 +155,9 @@ class DARTsortSorting:
         )
         numpy_sorting._compute_and_cache_spike_vector()
         if return_kept_indices:
-            # kept_indices[i] is the original index of numpy_sorting's ith spike
-            kept_indices = st.mask_indices[order]
+            m = st.get_mask_indices()
+            assert m is not None
+            kept_indices = m.copy() if isinstance(order, slice) else m[order]
             assert np.array_equal(self.labels[kept_indices], labels)
             return numpy_sorting, kept_indices  # type: ignore
         return numpy_sorting
@@ -236,7 +242,7 @@ class DARTsortSorting:
         template_data: "TemplateData | None" = None,
         template_cfg: TemplateConfig | None = None,
         motion: "MotionInfo | None" = None,
-        drop_doubles: bool = True,
+        drop_doubles: bool = False,
         compute_extensions: Sequence[str] | None = (
             "random_spikes",
             "waveforms",
@@ -827,6 +833,9 @@ class DARTsortSorting:
             ephemeral_features=ephemeral_features,
         )
 
+    def get_mask_indices(self) -> np.ndarray | None:
+        return self._ephemeral_features.get("mask_indices")
+
     def mask(self, mask: np.ndarray) -> Self:
         assert mask.ndim == 1
         if np.dtype(mask.dtype).kind == "b":
@@ -907,15 +916,20 @@ class DARTsortSorting:
         kept_indices = np.setdiff1d(np.arange(len(self)), viol_ixs)
         return st, kept_indices
 
-    def flatten(self, *, include_gmm_properties: bool = False) -> Self:
+    def flatten(
+        self, *, include_gmm_properties: bool = False, in_place: bool = False
+    ) -> Self:
         """Flatten the unit IDs so that there are no gaps in the sorted unique label set."""
         assert self.labels is not None
-        valid = np.flatnonzero(self.labels >= 0)
-        old_unique, flat_labels = np.unique(self.labels[valid], return_inverse=True)
-        if np.array_equal(old_unique, np.arange(old_unique.max() + 1)):
+
+        old_unique, _, _ = pos_int_unique_and_counts(self.labels)
+        old_K = old_unique.max() + 1 if old_unique.shape[0] > 0 else 0
+        if np.array_equal(old_unique, np.arange(old_K)):
             return self
-        new_labels = np.full_like(self.labels, -1)
-        new_labels[valid] = flat_labels
+
+        new_labels = self.labels if in_place else self.labels.copy()
+        remap = flatten_remapping(old_unique)
+        apply_label_remapping_in_place(new_labels, remap)
 
         keys = ("merged_candidates", "gmm_candidates")
         if not include_gmm_properties or not any(hasattr(self, k) for k in keys):
@@ -926,22 +940,20 @@ class DARTsortSorting:
             candidates = getattr(self, k, None)
             if candidates is None:
                 continue
-            valid = candidates >= 0
-            cands_valid = candidates[valid]
-            new_candidates = candidates.copy()
 
-            remapping = np.full((cands_valid.max() + 1,), -1)
-            remapping[old_unique] = np.arange(len(old_unique))
-
-            new_candidates[valid] = remapping[cands_valid]
+            new_candidates = candidates if in_place else candidates.copy()
+            apply_label_remapping_in_place(new_candidates, remap, allow_over=True)
 
             # now, "ghost" units (not top candidates but still existing
             # in the lower ranks) can have some probability mass that
             # needs to be deleted.
             resp_key = k.replace("candidates", "responsibilities")
-            resps = getattr(self, resp_key).copy()
+            resps = getattr(self, resp_key)
             loglik_key = k.replace("candidates", "log_liks")
-            logliks = getattr(self, loglik_key).copy()
+            logliks = getattr(self, loglik_key)
+            if not in_place:
+                resps = resps.copy()
+                logliks = logliks.copy()
             vacuum_neg_candidate_prob(
                 old_unique.shape[0], new_candidates, resps, logliks
             )
@@ -950,8 +962,7 @@ class DARTsortSorting:
             new_props[resp_key] = resps
             new_props[loglik_key] = logliks
 
-            # if merged candidates were present, the labels
-            # don't match gmm_candidates
+            # if "merged" were present, then labels don't match "gmm"
             break
 
         return self.ephemeral_replace(**new_props)
@@ -1015,21 +1026,28 @@ class DARTsortSorting:
         with h5py.File(self.parent_h5_path, "r", locking=False) as h5:
             return dataset_name in h5
 
-    def _load_dataset(self, dataset_name: str) -> np.ndarray:
+    def _load_dataset(self, dataset_name: str, sl=()) -> np.ndarray:
+        if dataset_name in self._ephemeral_features:
+            return self._ephemeral_features[dataset_name][sl]
+        if dataset_name in self._persistent_features:
+            return self._persistent_features[dataset_name][sl]
         assert self.parent_h5_path is not None
         with h5py.File(self.parent_h5_path, "r", locking=False) as h5:
             dset = h5[dataset_name]
             assert isinstance(dset, h5py.Dataset)
-            return dset[()]
+            if (m := self.get_mask_indices()) is not None:
+                dset = batched_h5_read(m, dset, show_progress=False)
+            return dset[sl]
 
     def _yield_dataset(self, dataset_name: str, batch_size: int = 1024):
         assert self.parent_h5_path is not None
         with h5py.File(self.parent_h5_path, "r", locking=False) as h5:
             dset = h5[dataset_name]
             assert isinstance(dset, h5py.Dataset)
-            for i0 in range(0, dset.shape[0], batch_size):
-                i1 = min(dset.shape[0], i0 + batch_size)
-                yield dset[i0:i1]
+            for _, chunk in yield_chunks(
+                dset, fallback_chunk_length=batch_size, show_progress=False
+            ):
+                yield chunk
 
     def slice_feature_by_name(
         self, dataset_name: str, mask: np.ndarray | slice = slice(None)
@@ -2166,3 +2184,157 @@ def vacuum_neg_candidate_prob(
             resp[s, -1] += rsj
             resp[s, j] = 0.0
             loglik[s, j] = -np.inf
+
+
+def pos_int_unique_and_counts(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, int]:
+    """np.unique specialized to integer data
+
+    Counts only entries >= 0 (i.e. ignores -1s, but also returns
+    their count separately).
+
+    Arguments
+    ---------
+    x: integer array
+
+    Returns
+    -------
+    unique: np.ndarray
+    counts: np.ndarray
+    neg_count: int
+    """
+    assert x.dtype.kind in ("i", "u")
+    if not x.size:
+        empty = np.zeros((0,), dtype=np.int64)
+        return empty, empty, 0
+    if x.ndim > 1:
+        assert x.flags.c_contiguous
+        x = x.ravel()
+    counts, neg_count = _pos_int_counts(x)
+    unique = np.flatnonzero(counts)
+    counts = counts[unique]
+    return unique, counts, neg_count
+
+
+@numba.njit(nogil=True, parallel=True)
+def _pos_int_counts(x: np.ndarray) -> tuple[np.ndarray, int]:
+    K = int(x.max() + 1)
+
+    if K == 0:
+        return np.zeros((K,), dtype=np.int64), x.shape[0]
+
+    num_threads = numba.get_num_threads()
+    # Create an isolated accumulation space for every thread
+    tcounts = np.zeros((num_threads, K), dtype=np.int64)
+    neg_count = 0
+    for i in numba.prange(x.shape[0]):  # ty: ignore
+        xi = x[i]
+        if xi < 0:
+            neg_count += 1
+            continue
+
+        ti = numba.get_thread_id()
+        tcounts[ti, xi] += 1
+
+    counts = tcounts.sum(0)
+    return counts, neg_count
+
+
+def flatten_remapping(units: np.ndarray, K: int | None = None) -> np.ndarray:
+    """The array which (when indexed by >=0 labels) flattens the ID space."""
+    if K is None:
+        K = int(units.max() + 1)
+    dtype = units.dtype if units.dtype.kind == "i" else np.int64
+    remap = np.full((K,), -1, dtype=dtype)
+    remap[units] = np.arange(len(units))
+    return remap
+
+
+@numba.njit(nogil=True, parallel=True)
+def count_not_sorted(x: np.ndarray) -> int:
+    count = 0
+    for i in numba.prange(x.shape[0] - 1):  # ty: ignore[not-iterable]
+        if x[i] > x[i + 1]:
+            count += 1
+    return count
+
+
+def apply_label_remapping_in_place(
+    labels: np.ndarray, remapping: np.ndarray, allow_over: bool = False
+):
+    """Remap a label space in place
+
+    Ignores -1s in labels.
+
+    If remapping is shorter than some large entries of labels,
+    that is allowed if allow_over, but beware those will map
+    to -1 (which is the intended behavior of the caller if they
+    are using that flag).
+
+    Arguments
+    ---------
+    labels : np.ndarray
+        Any shape. Will be flattened internally.
+    remapping: np.ndarray
+        labels[j] <- remapping[labels[j]]
+        So, remapping should be -1 to delete something.
+        If labels[j] was <0 or >remapping.shape[0]-1, result will be -1.
+    allow_over: bool
+        If False, raise if there were invalid positive indices
+    """
+    if not labels.flags.c_contiguous:
+        raise NotImplementedError()
+    over_count = _apply_remapping_and_count_over(labels.ravel(), remapping)
+    if not allow_over and over_count > 0:
+        raise ValueError(f"Found {over_count} too-big labels.")
+
+
+@numba.njit(nogil=True, parallel=True)
+def _apply_remapping_and_count_over(labels: np.ndarray, remapping: np.ndarray) -> int:
+    over_count = 0
+    K = remapping.shape[0]
+    for i in numba.prange(labels.shape[0]):  # ty: ignore[not-iterable]
+        li = labels[i]
+        if li < 0:
+            continue
+        if li >= K:
+            over_count += 1
+            continue
+        labels[i] = remapping[li]
+    return over_count
+
+
+def mean_by_label_1d(
+    sorting: DARTsortSorting, k: str, sl: tuple[slice | int, ...] = ()
+) -> np.ndarray:
+    """Average a property within each label (ignoring -1s)."""
+    assert sorting.labels is not None
+    if not sorting.labels.size:
+        return np.zeros((0,))
+    x = sorting._load_dataset(k, sl=sl)
+    assert x.dtype.kind == "f"
+    assert x.ndim == 1
+    assert sorting.labels.shape == x.shape
+    return _welford_by_label_1d(sorting.labels, x)
+
+
+@numba.njit(nogil=True, parallel=True)
+def _welford_by_label_1d(labels: np.ndarray, x: np.ndarray):
+    K = labels.max() + 1
+    mean = np.zeros((K,), dtype=np.float64)
+    count = np.zeros((K,), dtype=np.float64)
+
+    # deliberately not parallel!
+    for i in range(labels.shape[0]):
+        li = labels[i]
+        if li < 0:
+            continue
+        xi = float(x[i])
+
+        cli = count[li]
+        cli += 1.0
+        count[li] = cli
+        mean[li] += (xi - mean[li]) / cli
+
+    mean[count == 0] = np.nan
+
+    return mean
