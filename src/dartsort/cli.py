@@ -1,5 +1,6 @@
 import argparse
 import logging
+import pickle
 import sys
 
 import spikeinterface.core as sc
@@ -13,9 +14,7 @@ def dartsort_cli():
 
     Try `dartsort --help` to start.
 
-    ---<!!> Not stable.
-
-    I am figuring out how to do preprocessing still. It may be configured?
+    ---
     """
     # -- define CLI
     assert dartsort_cli.__doc__ is not None
@@ -90,7 +89,12 @@ def dartsort_cli():
 
     # load the recording
     try:
-        rec = sc.load(cli_util.ensurepath(args.recording))
+        rec_path = cli_util.ensurepath(args.recording, strict=True)
+        if rec_path.suffix == ".pkl":
+            with rec_path.open("rb") as jar:
+                rec = pickle.load(jar)
+        else:
+            rec = sc.load(rec_path)
         assert isinstance(rec, sc.BaseRecording)
     except FileNotFoundError as e:
         ee = FileNotFoundError(

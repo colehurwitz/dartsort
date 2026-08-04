@@ -15,6 +15,7 @@ figs/*
 *.sublime-workspace
 *.sublime-project
 .vscode/
+*.bin
 
 # sphinx
 docs/source/_autosummary/
