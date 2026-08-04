@@ -960,7 +960,7 @@ def deduplicate_spikes(
         dt = np.diff(t)
         if dt.min() > radius_samples:
             continue
-        discard = _dedup_unit(t, dt, scores[in_unit], radius_samples)
+        discard = dedup_unit(t, dt, scores[in_unit], radius_samples)
         ndrop += discard.sum()
         new_labels[in_unit[discard]] = -1
 
