@@ -14,9 +14,7 @@ def dartsort_cli():
 
     Try `dartsort --help` to start.
 
-    ---<!!> Not stable.
-
-    I am figuring out how to do preprocessing still. It may be configured?
+    ---
     """
     # -- define CLI
     assert dartsort_cli.__doc__ is not None
