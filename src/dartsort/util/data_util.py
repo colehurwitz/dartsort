@@ -111,6 +111,15 @@ class DARTsortSorting:
                     continue
                 self.add_ephemeral_feature(k, v, check_shape=check_shape)
 
+    def unload(self) -> Self:
+        return self.__class__(
+            times_samples=self.times_samples,
+            channels=self.channels,
+            labels=self.labels,
+            parent_h5_path=self.parent_h5_path,
+            sampling_frequency=self.sampling_frequency,
+        )
+
     @property
     def unit_ids(self) -> np.ndarray:
         if self.labels is None:

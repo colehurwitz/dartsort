@@ -54,7 +54,6 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
         save_collidedness=False,
         whiten_features=False,
         whiten_kernel_length=0,
-        parent_sorting_hdf5_path: str | Path | None = None,
         dtype=torch.float,
     ):
         if matching_templates is not None:
@@ -85,9 +84,6 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
         self.thresholdsq: float = self.p.threshold * self.p.threshold
         self.save_collidedness = save_collidedness
         self.whiten_features = whiten_features
-
-        # fp control threshold stuff (TODO: remove?)
-        self.parent_sorting_hdf5_path = parent_sorting_hdf5_path
 
         geom = recording.get_channel_locations()
         self.picking_channels = p.channel_selection != "template"
@@ -170,7 +166,6 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
         sampling_cfg: FitSamplingConfig,
         template_data: TemplateData | None,
         motion: MotionInfo | None = None,
-        parent_sorting_hdf5_path=None,
     ) -> Self:
         if motion is not None:
             geom = torch.asarray(motion.geom)
@@ -243,7 +238,6 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
             p=matching_cfg,
             waveform_cfg=waveform_cfg,
             fit_sampling_cfg=sampling_cfg,
-            parent_sorting_hdf5_path=parent_sorting_hdf5_path,
             save_collidedness=save_collidedness,
             whiten_features=matching_cfg.whiten_features,
             whiten_kernel_length=whiten_kernel_length,

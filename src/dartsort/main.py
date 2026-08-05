@@ -363,6 +363,10 @@ def _dartsort_impl(
             will_refine,
         ) = _matching_step_cfgs(is_final, is_subsampling, cfg)
 
+        # avoid keeping all the previous step's features in memory
+        sorting = sorting.unload()
+        cleanup_and_log_gpu_usage(computation_cfg=cfg.computation_cfg, message="Unload")
+
         logger.dartsortdebug(f"-- Matching {step}")
         with timer(f"matching{step}", ret["timing"]):
             sorting = match(
@@ -636,9 +640,11 @@ def match(
                 output_dir=output_dir,
                 cfg=save_cfg,
             )
-        cleanup_and_log_gpu_usage(
-            computation_cfg, f"Post templates ({model_subdir}/{template_npz}):"
-        )
+
+    del sorting
+    cleanup_and_log_gpu_usage(
+        computation_cfg, f"Post templates ({model_subdir}/{template_npz}):"
+    )
 
     matching_peeler = ObjectiveUpdateTemplateMatchingPeeler.from_config(
         recording=recording,
@@ -648,7 +654,6 @@ def match(
         featurization_cfg=featurization_cfg,
         template_data=template_data,
         motion=motion,
-        parent_sorting_hdf5_path=getattr(sorting, "parent_h5_path", None),
     )
     sorting = run_peeler(
         matching_peeler,
