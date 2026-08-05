@@ -1,4 +1,5 @@
-from typing import Literal, Union
+from math import isinf
+from typing import Literal
 
 import numpy as np
 import torch
@@ -17,6 +18,7 @@ from ..util.interpolation_util import (
     kernel_interpolate,
     tps_interp_params,
 )
+from ..util.py_util import panic
 from ..util.waveform_util import (
     make_channel_index,
     upsample_multichan,
@@ -25,10 +27,10 @@ from ..util.waveform_util import (
 
 
 def get_template_simulator(
-    n_units,
+    n_units: int,
     templates_kind="3exp",
     template_library=None,
-    geom=None,
+    geom: np.ndarray | None = None,
     sampling_frequency=30_000.0,
     random_seed=0,
     common_reference=False,
@@ -45,10 +47,13 @@ def get_template_simulator(
             temporal_jitter=temporal_jitter,
             **template_simulator_kwargs,
         )
-    if templates_kind == "library":
+    elif templates_kind == "library":
         assert template_library is not None
+        assert geom is not None
+        template_simulator_kwargs = template_simulator_kwargs.copy()
         return TemplateLibrarySimulator.from_template_library(
-            geom=geom,
+            source_geom=template_simulator_kwargs.pop("source_geom", geom),
+            target_geom=geom,
             n_units=n_units,
             templates=template_library,
             seed=random_seed,
@@ -56,8 +61,9 @@ def get_template_simulator(
             temporal_jitter=temporal_jitter,
             **template_simulator_kwargs,
         )
-    if templates_kind == "static":
+    elif templates_kind == "static":
         assert "template_data" in template_simulator_kwargs
+        template_simulator_kwargs = template_simulator_kwargs.copy()
         template_data = template_simulator_kwargs.pop("template_data")
         if geom is not None:
             assert np.array_equal(geom, template_data.registered_geom)
@@ -68,7 +74,8 @@ def get_template_simulator(
             temporal_jitter=temporal_jitter,
             **template_simulator_kwargs,
         )
-    assert False
+    else:
+        panic(templates_kind)
 
 
 def singlechan_to_probe(pos, alpha, waveforms, geom3, decay_model="squared"):
@@ -80,7 +87,7 @@ def singlechan_to_probe(pos, alpha, waveforms, geom3, decay_model="squared"):
     elif decay_model == "32":
         amp = alpha * (cdist(pos, geom3).astype(dtype) ** -(3 / 2))
     else:
-        assert False
+        panic(decay_model)
     n_dims_expand = waveforms.ndim - 1
     templates = waveforms[..., :, None] * amp[..., *([None] * n_dims_expand), :]
     return templates
@@ -192,8 +199,8 @@ class PointSource3ExpSimulator(BaseTemplateSimulator):
         alpha_family="uniform",
         alpha_min=5 * 25.0**2,
         alpha_max=40 * 25.0**2,
-        alpha_mean=10.0 * np.square(25.0),
-        alpha_var=5.0 * np.square(25.0),
+        alpha_mean=10.0 * 25.0**2,
+        alpha_var=5.0 * 25.0**2,
         # config
         ms_before=1.4,
         ms_after=2.6,
@@ -328,12 +335,13 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
     def __init__(
         self,
         geom: np.ndarray,
-        templates_local,
-        pos_local,
+        templates_local: np.ndarray,
+        pos_local: np.ndarray,
         radius=250.0,
         temporal_jitter=1,
         common_reference=False,
         trough_offset_samples=42,
+        svd_rank=16,
         interp_method: Literal["griddata", "dart"] = "dart",
         griddata_method: str = "cubic",
         interp_params: InterpolationParams = tps_interp_params,
@@ -352,7 +360,9 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
 
         self.n_units = len(templates_local)
         self.templates_local = templates_local
-        self.low_rank_templates = svd_compress_templates(templates_local, allow_na=True)
+        self.low_rank_templates = svd_compress_templates(
+            templates_local, allow_na=True, rank=svd_rank
+        )
         self.temporal_up = upsample_multichan(
             self.low_rank_templates.temporal_components, temporal_jitter=temporal_jitter
         )
@@ -375,7 +385,7 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
 
         # precompute interpolation data
         self.interp_method = interp_method
-        if interp_method != "griddata":
+        if interp_method == "dart":
             self.precomputed_data = interp_precompute(
                 source_pos=pos_local, params=self.interp_params
             )
@@ -395,10 +405,12 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
     @classmethod
     def from_template_library(
         cls,
-        geom,
-        n_units,
-        templates,
-        randomize_position=True,
+        source_geom: np.ndarray,
+        n_units: int,
+        templates: np.ndarray,
+        target_geom: np.ndarray | None = None,
+        depths: np.ndarray | None = None,
+        depth_jitter: float = 0.0,
         common_reference=False,
         temporal_jitter=1,
         extract_radius=250.0,
@@ -408,35 +420,50 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
         seed=0,
         dtype="float32",
         interp_params: InterpolationParams = tps_interp_params,
-        **kwargs,
     ):
         rg = np.random.default_rng(seed)
+
+        if target_geom is None:
+            target_geom = source_geom
+
         if templates.shape[0] > n_units:
             choices = rg.choice(len(templates), size=n_units, replace=False)
             templates = templates[choices]
         templates = templates.astype(dtype)
 
         assert np.isfinite(templates).all()
-        channel_index = make_channel_index(geom, extract_radius, to_torch=False)
+        channel_index = make_channel_index(source_geom, extract_radius, to_torch=False)
         main_channels = np.abs(templates).max(1).argmax(1)
         template_channels = channel_index[main_channels]
 
-        geomp = np.pad(geom.astype(dtype), [(0, 1), (0, 0)], constant_values=np.nan)
+        geomp = np.pad(
+            source_geom.astype(dtype), [(0, 1), (0, 0)], constant_values=np.nan
+        )
         templatesp = np.pad(templates, [(0, 0), (0, 0), (0, 1)], constant_values=np.nan)
         pos_local = geomp[template_channels]
         templates_local = np.take_along_axis(
             templatesp, template_channels[:, None], axis=2
         )
 
-        if randomize_position:
-            z_low = geom[:, 1].min() - pos_margin_um_z
-            z_high = geom[:, 1].max() + pos_margin_um_z
+        if depths is not None:
+            pos_local[..., 1] += depths[:, None] - source_geom[main_channels, 1][:, None]
+        elif isinf(depth_jitter):
+            assert depth_jitter > 0
+            z_low = target_geom[:, 1].min() - pos_margin_um_z
+            z_high = target_geom[:, 1].max() + pos_margin_um_z
             z = rg.uniform(z_low, z_high, size=n_units)
             # z = rg.choice(np.unique(geom[:, 1]), size=n_units)
-            pos_local[..., 1] += z[:, None] - geom[main_channels, 1][:, None]
+            pos_local[..., 1] += z[:, None] - source_geom[main_channels, 1][:, None]
+        elif depth_jitter > 0:
+            z = rg.uniform(-depth_jitter, depth_jitter, size=n_units)
+            # z = rg.choice(np.unique(geom[:, 1]), size=n_units)
+            pos_local[..., 1] += z[:, None] - source_geom[main_channels, 1][:, None]
+        else:
+            assert depth_jitter == 0
+            assert np.allclose(source_geom, target_geom)
 
         return cls(
-            geom=geom,
+            geom=target_geom,
             templates_local=templates_local,
             pos_local=pos_local,
             temporal_jitter=temporal_jitter,
@@ -444,7 +471,6 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
             trough_offset_samples=trough_offset_samples,
             radius=inject_radius,
             interp_params=interp_params,
-            **kwargs,
         )
 
     def interpolate_templates(self, source_pos, target_pos, unit_ids, up=False):
@@ -556,9 +582,9 @@ def griddata_interp(templates, source_pos, target_pos, out, method):
     return out
 
 
-TemplateSimulator = Union[
-    StaticTemplateSimulator, PointSource3ExpSimulator, TemplateLibrarySimulator
-]
+TemplateSimulator = (
+    StaticTemplateSimulator | PointSource3ExpSimulator | TemplateLibrarySimulator
+)
 
 
 # point source library fns
