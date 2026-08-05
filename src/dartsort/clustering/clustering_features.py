@@ -78,12 +78,12 @@ class SimpleMatrixFeatures:
         t_s = sorting.times_seconds
         raise_on_na = clustering_features_cfg.raise_for_numerics
         if sorting.has_dataset(clustering_features_cfg.localizations_dataset_name):
-            x = sorting._load_dataset(
+            x = sorting.load_dataset(
                 clustering_features_cfg.localizations_dataset_name,
                 sl=(slice(None), 0),
             )
             check_numbers("x", x, raise_for_numerics=raise_on_na)
-            z = sorting._load_dataset(
+            z = sorting.load_dataset(
                 clustering_features_cfg.localizations_dataset_name,
                 sl=(slice(None), 2),
             )

@@ -185,11 +185,11 @@ def motion_needs_peaks(
     targ_chunk_starts = np.arange(
         0, recording.get_num_samples(), cfg.initial_detection_cfg.chunk_length_samples
     )
-    my_chunk_starts = sorting._load_dataset("chunk_starts_samples")
+    my_chunk_starts = sorting.load_dataset("chunk_starts_samples")
     assert np.array_equal(targ_chunk_starts, np.sort(my_chunk_starts))
 
     # check if sorting quit early
-    last_chunk_start = sorting._load_dataset("last_chunk_start").item()
+    last_chunk_start = sorting.load_dataset("last_chunk_start").item()
     complete = my_chunk_starts[-1] == last_chunk_start
 
     return not complete

@@ -122,7 +122,7 @@ def agglomerate(
             agg_sorting = deduplicate_spikes(agg_sorting, refinement_cfg.dedup_ms)
 
         agg_sorting, reorder = reorder_by_depth(
-            agg_sorting, motion=motion, in_place=True, is_flat=True
+            agg_sorting, motion=motion, in_place=True
         )
         if new_ids is None:
             new_ids = reorder
@@ -941,7 +941,7 @@ def deduplicate_spikes(
         if not sorting.has_dataset(sck):
             continue
         sl = (slice(None), 0) if sck.endswith("log_liks") else ()
-        scores = sorting._load_dataset(sck, sl=sl)
+        scores = sorting.load_dataset(sck, sl=sl)
         if scores is not None:
             logger.dartsortdebug(f"deduplicate by score {sck}")
             break
@@ -964,7 +964,7 @@ def deduplicate_spikes(
 
     unit_ids, _, _ = pos_int_unique_and_counts(new_labels)
     ndrop = 0
-    unit_mask_tmp = np.empty(new_labels.shape, dtype=np.bool)
+    unit_mask_tmp = np.empty(new_labels.shape, dtype=bool)
     for unit_id in unit_ids:
         in_unit = np.flatnonzero(np.equal(new_labels, unit_id, out=unit_mask_tmp))
         if in_unit.size <= 1:

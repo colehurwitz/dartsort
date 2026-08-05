@@ -112,6 +112,8 @@ class DARTsortSorting:
                 self.add_ephemeral_feature(k, v, check_shape=check_shape)
 
     def unload(self) -> Self:
+        if self.get_mask_indices() is not None:
+            raise ValueError("Unload with a mask not implemented.")
         return self.__class__(
             times_samples=self.times_samples,
             channels=self.channels,
@@ -444,7 +446,7 @@ class DARTsortSorting:
             assert "labels" not in self._persistent_features
             return False
         try:
-            return np.array_equal(self.labels, self._load_dataset("labels"))
+            return np.array_equal(self.labels, self.load_dataset("labels"))
         except KeyError:
             return False
 
@@ -464,7 +466,7 @@ class DARTsortSorting:
                     if name in self._persistent_features:
                         return self._persistent_features[name]
                 if self.has_dataset(name):
-                    feature = self._load_dataset(name)
+                    feature = self.load_dataset(name)
                     self._register_persistent_feature(name, feature, try_insert=False)
                     return feature
         raise AttributeError
@@ -1035,7 +1037,8 @@ class DARTsortSorting:
         with h5py.File(self.parent_h5_path, "r", locking=False) as h5:
             return dataset_name in h5
 
-    def _load_dataset(self, dataset_name: str, sl=()) -> np.ndarray:
+    def load_dataset(self, dataset_name: str, sl=()) -> np.ndarray:
+
         if dataset_name in self._ephemeral_features:
             return self._ephemeral_features[dataset_name][sl]
         if dataset_name in self._persistent_features:
@@ -1045,7 +1048,7 @@ class DARTsortSorting:
             dset = h5[dataset_name]
             assert isinstance(dset, h5py.Dataset)
             if (m := self.get_mask_indices()) is not None:
-                dset = batched_h5_read(m, dset, show_progress=False)
+                dset = batched_h5_read(dataset=dset, indices=m, show_progress=False)
             return dset[sl]
 
     def _yield_dataset(self, dataset_name: str, batch_size: int = 1024):
@@ -1072,7 +1075,7 @@ class DARTsortSorting:
         if self.parent_h5_path is None:
             raise ValueError(f"Can't load feature {dataset_name} with no HDF5.")
         if isinstance(mask, slice) and mask == slice(None):
-            return self._load_dataset(dataset_name)
+            return self.load_dataset(dataset_name)
 
         # h5 direct read is fine for a few indices
         if isinstance(mask, np.ndarray) and mask.dtype.kind != "b":
@@ -2225,7 +2228,7 @@ def pos_int_unique_and_counts(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, in
 def _pos_int_counts(x: np.ndarray) -> tuple[np.ndarray, int]:
     K = int(x.max() + 1)
 
-    if K == 0:
+    if K <= 0:
         return np.zeros((K,), dtype=np.int64), x.shape[0]
 
     num_threads = numba.get_num_threads()
@@ -2304,19 +2307,17 @@ def _apply_remapping_and_count_over(labels: np.ndarray, remapping: np.ndarray) -
             continue
         if li >= K:
             over_count += 1
+            labels[i] = -1
             continue
         labels[i] = remapping[li]
     return over_count
 
 
-def mean_by_label_1d(
-    sorting: DARTsortSorting, k: str, sl: tuple[slice | int, ...] = ()
-) -> np.ndarray:
+def mean_by_label_1d(sorting: DARTsortSorting, x: np.ndarray) -> np.ndarray:
     """Average a property within each label (ignoring -1s)."""
     assert sorting.labels is not None
     if not sorting.labels.size:
         return np.zeros((0,))
-    x = sorting._load_dataset(k, sl=sl)
     assert x.dtype.kind == "f"
     assert x.ndim == 1
     assert sorting.labels.shape == x.shape

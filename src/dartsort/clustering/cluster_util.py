@@ -367,9 +367,10 @@ def reorder_by_depth(
         centroids = w @ geom[:, 1]
 
     if centroids is None:
-        centroids = mean_by_label_1d(
-            sorting, k="point_source_localizations", sl=(slice(None), 2)
-        )
+        z = sorting.load_dataset("point_source_localizations", sl=(slice(None), 2))
+        if motion is not None:
+            z = motion.correct_s(sorting.times_seconds, z)
+        centroids = mean_by_label_1d(sorting, z)
 
     labels = sorting.labels if in_place else sorting.labels.copy()
     reorder = np.argsort(np.argsort(centroids, kind="stable"), kind="stable")
@@ -539,7 +540,9 @@ def decrumb_labels(labels: np.ndarray, min_size: int = 5, in_place=False, flatte
         The (flattened) decrumbed labels.
     """
     units, counts, _ = pos_int_unique_and_counts(labels)
-    if (not units.size) or (counts.min() >= min_size):
+    all_big = counts.min() >= min_size
+    flat_ok = (not flatten) or np.array_equal(units, np.arange(len(units)))
+    if (not units.size) or (all_big and flat_ok):
         return labels
     remapping = np.full((units.max() + 1,), -1, dtype=labels.dtype)
     kept_units = units[counts >= min_size]
@@ -566,6 +569,7 @@ def decrumb(
     remapping[kept_units] = kept_units
     new_labels = sorting.labels if in_place else sorting.labels.copy()
     apply_label_remapping_in_place(new_labels, remapping)
+    sorting = sorting.ephemeral_replace(labels=new_labels)
     if flatten:
         sorting = sorting.flatten(in_place=in_place)
     return sorting
