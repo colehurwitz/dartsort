@@ -262,6 +262,7 @@ class ClusteringFeaturesConfig:
     pc_transform: Literal["log", "sqrt", "none"] | None = "none"
     pc_pre_transform_scale: float = 0.5
     adaptive_feature_scales: bool = False
+    need_xyza: bool = False
 
     # stable feature controls
     feature_rank: int = 8
@@ -964,7 +965,9 @@ class DARTsortInternalConfig:
 
     # development / debugging flags
     work_in_tmpdir: bool = False
-    copy_recording_to_tmpdir: Literal["yes", "no", "if_preprocessing"] = "if_preprocessing"
+    copy_recording_to_tmpdir: Literal["yes", "no", "if_preprocessing"] = (
+        "if_preprocessing"
+    )
     workdir_follow_symlinks: bool = False
     workdir_copier: Literal["shutil", "rsync"] = "shutil"
     tmpdir_parent: str | None = None

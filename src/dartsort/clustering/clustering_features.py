@@ -1,6 +1,7 @@
 from typing import Self, cast
 
 import h5py
+import numba
 import numpy as np
 import torch
 from torch import Tensor
@@ -75,26 +76,28 @@ class SimpleMatrixFeatures:
 
         computation_cfg = ensure_computation_config(computation_cfg)
         t_s = sorting.times_seconds
-        xyza = getattr(
-            sorting, clustering_features_cfg.localizations_dataset_name, None
-        )
-        if xyza is not None:
-            x = xyza[:, 0]
-            _check_numbers(
-                "x", x, raise_for_numerics=clustering_features_cfg.raise_for_numerics
+        raise_on_na = clustering_features_cfg.raise_for_numerics
+        if sorting.has_dataset(clustering_features_cfg.localizations_dataset_name):
+            x = sorting._load_dataset(
+                clustering_features_cfg.localizations_dataset_name,
+                sl=(slice(None), 0),
             )
-            z = xyza[:, 2]
-            _check_numbers(
-                "z", z, raise_for_numerics=clustering_features_cfg.raise_for_numerics
+            check_numbers("x", x, raise_for_numerics=raise_on_na)
+            z = sorting._load_dataset(
+                clustering_features_cfg.localizations_dataset_name,
+                sl=(slice(None), 2),
             )
+            check_numbers("z", z, raise_for_numerics=raise_on_na)
             z_reg = motion.correct_s(t_s, z)
-            _check_numbers(
-                "z_reg",
-                z_reg,
-                raise_for_numerics=clustering_features_cfg.raise_for_numerics,
-            )
+            check_numbers("z_reg", z_reg, raise_for_numerics=raise_on_na)
+            if clustering_features_cfg.need_xyza:
+                xyza = getattr(
+                    sorting, clustering_features_cfg.localizations_dataset_name
+                )
+            else:
+                xyza = None
         else:
-            x = z = z_reg = None
+            x = z = z_reg = xyza = None
 
         features = []
 
@@ -113,20 +116,14 @@ class SimpleMatrixFeatures:
         amp = getattr(sorting, clustering_features_cfg.amplitudes_dataset_name)
         if clustering_features_cfg.use_amplitude:
             assert amp is not None
-            _check_numbers(
-                "amp",
-                amp,
-                raise_for_numerics=clustering_features_cfg.raise_for_numerics,
-            )
-            ampft = amp.copy()
+            check_numbers("amp", amp, raise_for_numerics=raise_on_na)
             if clustering_features_cfg.log_transform_amplitude:
-                ampft = np.log(clustering_features_cfg.amp_log_c + ampft)
-                ampft *= clustering_features_cfg.amp_scale
-            _check_numbers(
-                "ampft",
-                ampft,
-                raise_for_numerics=clustering_features_cfg.raise_for_numerics,
-            )
+                ampft = cast(np.ndarray, clustering_features_cfg.amp_log_c + amp)
+                np.log(ampft, out=ampft)
+            else:
+                ampft = amp.copy()
+            ampft *= clustering_features_cfg.amp_scale
+            check_numbers("ampft", ampft, raise_for_numerics=raise_on_na)
             features.append(ampft[:, None])
 
         v = getattr(sorting, clustering_features_cfg.voltages_dataset_name, None)
@@ -136,21 +133,17 @@ class SimpleMatrixFeatures:
             samp = amp * np.sign(v)
 
         if clustering_features_cfg.use_signed_amplitude:
-            features.append(clustering_features_cfg.amp_scale * samp[:, None])
+            samp *= clustering_features_cfg.amp_scale
+            features.append(samp[:, None])
 
         do_pcs = bool(clustering_features_cfg.n_main_channel_pcs)
-        pcs = None
         if do_pcs and not clustering_features_cfg.motion_aware:
             pcs = cluster_util.get_main_channel_pcs(
                 sorting,
                 rank=clustering_features_cfg.n_main_channel_pcs,
                 dataset_name=clustering_features_cfg.pca_dataset_name,
             )
-            _check_numbers(
-                "No motion pcs",
-                pcs,
-                raise_for_numerics=clustering_features_cfg.raise_for_numerics,
-            )
+            check_numbers("No motion pcs", pcs, raise_for_numerics=raise_on_na)
         elif do_pcs and clustering_features_cfg.motion_aware:
             shifts, n_pitches_shift = motion.pitch_shifts(
                 sorting=sorting,
@@ -165,52 +158,26 @@ class SimpleMatrixFeatures:
                 n_pitches_shift=n_pitches_shift,
                 workers=workers,
             )
-            mask = np.ones((1,), dtype=bool)
-            mask = np.broadcast_to(mask, len(schan))
-            if hasattr(sorting, clustering_features_cfg.pca_dataset_name):
-                pcs = getattr(sorting, clustering_features_cfg.pca_dataset_name)
-                _check_numbers(
-                    "sorting pcs",
-                    pcs,
-                    raise_for_numerics=clustering_features_cfg.raise_for_numerics,
-                )
+            assert sorting.parent_h5_path is not None
+            with h5py.File(sorting.parent_h5_path, "r", locking=False) as h5:
                 _erp, pcs = interpolate_by_chunk(
-                    mask=mask,
-                    dataset=pcs,
+                    mask=None,
+                    dataset=h5[clustering_features_cfg.pca_dataset_name],
                     geom=motion.geom,
-                    channel_index=cast(h5py.Dataset, sorting.channel_index)[:],
+                    channel_index=cast(h5py.Dataset, h5["channel_index"])[:],
                     channels=sorting.channels,
                     shifts=shifts,
                     registered_geom=motion.rgeom,
                     target_channels=schan,
                     params=clustering_features_cfg.interp_params,
+                    trim_to_rank=clustering_features_cfg.n_main_channel_pcs,
+                    show_progress=False,
                 )
+                assert pcs.shape[2] == 1  # just one channel here
                 pcs = pcs[:, : clustering_features_cfg.n_main_channel_pcs, 0]
-                _check_numbers(
-                    "sorting interp pcs",
-                    pcs,
-                    raise_for_numerics=clustering_features_cfg.raise_for_numerics,
-                )
-            else:
-                assert sorting.parent_h5_path is not None
-                with h5py.File(sorting.parent_h5_path, "r", locking=False) as h5:
-                    _erp, pcs = interpolate_by_chunk(
-                        mask=mask,
-                        dataset=h5[clustering_features_cfg.pca_dataset_name],
-                        geom=motion.geom,
-                        channel_index=cast(h5py.Dataset, h5["channel_index"])[:],
-                        channels=sorting.channels,
-                        shifts=shifts,
-                        registered_geom=motion.rgeom,
-                        target_channels=schan,
-                        params=clustering_features_cfg.interp_params,
-                    )
-                    pcs = pcs[:, : clustering_features_cfg.n_main_channel_pcs, 0]
-                _check_numbers(
-                    "h5 interp pcs",
-                    pcs,
-                    raise_for_numerics=clustering_features_cfg.raise_for_numerics,
-                )
+            check_numbers("h5 interp pcs", pcs, raise_for_numerics=raise_on_na)
+        else:
+            pcs = None
 
         if do_pcs:
             assert pcs is not None
@@ -226,11 +193,7 @@ class SimpleMatrixFeatures:
             else:
                 assert pctf in ("none", None)
             pcs *= clustering_features_cfg.pc_scale
-            _check_numbers(
-                f"{pctf} pcs",
-                pcs,
-                raise_for_numerics=clustering_features_cfg.raise_for_numerics,
-            )
+            check_numbers(f"{pctf} pcs", pcs, raise_for_numerics=raise_on_na)
             if torch.is_tensor(pcs):
                 pcs = pcs.numpy(force=True)
             features.append(pcs)
@@ -365,20 +328,14 @@ def signed_sqrt_transform(x, pre_scale=1.0):
     return xx
 
 
-def _allfinite(x):
-    if isinstance(x, torch.Tensor):
-        return x.isfinite().all()
-    else:
-        return np.isfinite(x).all()
-
-
-def _check_numbers(name: str, x: np.ndarray, raise_for_numerics=False):
+def check_numbers(name: str, x: np.ndarray, raise_for_numerics=False):
     if isinstance(x, torch.Tensor):
         x = x.numpy(force=True)
+    if x.ndim > 1:
+        x = x.ravel()
 
-    npinf = np.isposinf(x).sum()
-    nninf = np.isneginf(x).sum()
-    nna = np.isnan(x).sum()
+    npinf, nninf, nna = count_non_finite(x)
+
     if not (npinf + nninf + nna):
         return
 
@@ -387,3 +344,19 @@ def _check_numbers(name: str, x: np.ndarray, raise_for_numerics=False):
         raise ValueError(err)
     else:
         logger.warning(err)
+
+
+@numba.njit(nogil=True, parallel=True)
+def count_non_finite(x: np.ndarray):
+    npinf = 0
+    nninf = 0
+    nna = 0
+    for i in numba.prange(x.shape[0]):  # ty: ignore[not-iterable]
+        xi = x[i]
+        if np.isposinf(xi):
+            npinf += 1
+        if np.isneginf(xi):
+            nninf += 1
+        if np.isnan(xi):
+            nna += 1
+    return npinf, nninf, nna

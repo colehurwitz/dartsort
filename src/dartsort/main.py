@@ -271,6 +271,7 @@ def _dartsort_impl(
                 cfg=cfg,
                 overwrite=overwrite,
                 motion=motion,
+                load_simple_features=False,
             )
         assert sorting is not None
         logger.info(f"Initial detection: {sorting}")

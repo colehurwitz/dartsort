@@ -454,7 +454,7 @@ class DARTsortSorting:
                 if "_persistent_features" in self.__dict__:
                     if name in self._persistent_features:
                         return self._persistent_features[name]
-                if self._has_dataset(name):
+                if self.has_dataset(name):
                     feature = self._load_dataset(name)
                     self._register_persistent_feature(name, feature, try_insert=False)
                     return feature
@@ -1014,7 +1014,7 @@ class DARTsortSorting:
                 f"Feature {feature_name}'s shape {feature.shape} didn't agree with spike count {self.n_spikes}."
             )
 
-    def _has_dataset(self, dataset_name: str) -> bool:
+    def has_dataset(self, dataset_name: str) -> bool:
         if dataset_name in self._ephemeral_features:
             return True
         if dataset_name in self._persistent_features:
@@ -1900,7 +1900,10 @@ def _read_by_chunk(mask, dataset, show_progress=True):
 
 
 def yield_chunks(
-    dataset, show_progress=True, desc_prefix=None, fallback_chunk_length=4096
+    dataset: h5py.Dataset | np.ndarray,
+    show_progress=True,
+    desc_prefix=None,
+    fallback_chunk_length=4096,
 ) -> Generator[tuple[slice, np.ndarray], None, None]:
     """Iterate chunks of an h5py dataset (or np.ndarray)
 
@@ -1912,6 +1915,7 @@ def yield_chunks(
             for s in range(0, len(dataset), fallback_chunk_length)
         )
     else:
+        assert isinstance(dataset, h5py.Dataset)
         for c, s in zip(dataset.chunks[1:], dataset.shape[1:], strict=True):
             if c == s:
                 continue
@@ -1931,6 +1935,7 @@ def yield_chunks(
         if getattr(dataset, "chunks", None) is None:
             n_chunks = int(np.ceil(dataset.shape[0] / fallback_chunk_length))
         else:
+            assert isinstance(dataset, h5py.Dataset)
             n_chunks = int(np.ceil(dataset.shape[0] / dataset.chunks[0]))
         chunks = progbar(chunks, total=n_chunks, desc=desc)
 
@@ -1938,15 +1943,27 @@ def yield_chunks(
         yield sli, dataset[sli]
 
 
-def yield_masked_chunks(mask, dataset, show_progress=True, desc_prefix=None):
+def yield_masked_chunks(
+    mask: np.ndarray | None,
+    dataset: h5py.Dataset | np.ndarray,
+    show_progress: bool = True,
+    desc_prefix=None,
+):
     offset = 0
+    if mask is not None:
+        assert mask.dtype.kind == "b"
     for sli, data in yield_chunks(
         dataset, show_progress=show_progress, desc_prefix=desc_prefix
     ):
-        source_ixs = np.flatnonzero(mask[sli])
-        dest_ixs = slice(offset, offset + source_ixs.size)
-        yield dest_ixs, data[source_ixs]
-        offset += source_ixs.size
+        if mask is not None:
+            source_ixs = np.flatnonzero(mask[sli])
+            nsrc = source_ixs.size
+            data = data[source_ixs]
+        else:
+            nsrc = data.shape[0]
+        dest_ixs = slice(offset, offset + nsrc)
+        yield dest_ixs, data
+        offset += nsrc
 
 
 # -- residual

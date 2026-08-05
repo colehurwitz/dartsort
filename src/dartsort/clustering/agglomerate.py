@@ -938,7 +938,7 @@ def deduplicate_spikes(
     new_labels = sorting.labels.copy()
     scores = None
     for sck in score_by:
-        if not sorting._has_dataset(sck):
+        if not sorting.has_dataset(sck):
             continue
         sl = (slice(None), 0) if sck.endswith("log_liks") else ()
         scores = sorting._load_dataset(sck, sl=sl)
