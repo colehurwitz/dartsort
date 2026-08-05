@@ -124,8 +124,8 @@ class DARTsortSorting:
     def unit_ids(self) -> np.ndarray:
         if self.labels is None:
             return np.array([], dtype=np.int64)
-        u = np.unique(self.labels)
-        return u[u >= 0]
+        u, _, _ = pos_int_unique_and_counts(self.labels)
+        return u
 
     @property
     def n_units(self) -> int:
@@ -926,7 +926,7 @@ class DARTsortSorting:
         return st, kept_indices
 
     def flatten(
-        self, *, include_gmm_properties: bool = False, in_place: bool = False
+        self, *, include_gmm_properties: bool = True, in_place: bool = False
     ) -> Self:
         """Flatten the unit IDs so that there are no gaps in the sorted unique label set."""
         assert self.labels is not None
@@ -1701,23 +1701,10 @@ def check_recording(
     return failed, avg_detections_per_second, max_abs, std
 
 
-def subset_sorting_by_spike_count(sorting, min_spikes=0, max_spikes=np.inf):
-    if not min_spikes:
-        return sorting
-
-    units, counts = np.unique(sorting.labels, return_counts=True)
-    invalid = np.logical_or(counts < min_spikes, counts > max_spikes)
-    bad_units = units[invalid]
-
-    new_labels = np.where(np.isin(sorting.labels, bad_units), -1, sorting.labels)
-
-    return sorting.ephemeral_replace(labels=new_labels)
-
-
 def subsample_to_max_count(
     sorting, max_spikes=256, seed: int | np.random.Generator = 0
 ):
-    units, counts = np.unique(sorting.labels, return_counts=True)
+    units, counts, _ = pos_int_unique_and_counts(sorting.labels)
     if counts.max() <= max_spikes:
         return sorting
 
@@ -1807,13 +1794,6 @@ def time_chunk_sortings(
         subset_sorting_by_time_seconds(sorting, *tt) for tt in chunk_time_ranges_s
     ]
     return chunk_time_ranges_s, chunk_sortings
-
-
-def reindex_sorting_labels(sorting):
-    new_labels = sorting.labels.copy()
-    kept = np.flatnonzero(new_labels >= 0)
-    _, new_labels[kept] = np.unique(new_labels[kept], return_inverse=True)
-    return sorting.ephemeral_replace(labels=new_labels)
 
 
 def combine_sortings(sortings, dodge=False):

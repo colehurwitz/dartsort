@@ -178,8 +178,7 @@ def sparsify_labels(
 ) -> dict[int, np.ndarray]:
     assert labels.ndim == 1
     if ids is None:
-        ids = np.unique(labels)
-        ids = ids[ids >= 0]
+        ids, _, _ = pos_int_unique_and_counts(labels)
     inj = {}
     for j in ids:
         inj[j] = np.flatnonzero(labels == j)
@@ -523,7 +522,7 @@ def get_main_channel_pcs(
     return features
 
 
-def decrumb(labels: np.ndarray, min_size: int = 5, in_place=False, flatten=True):
+def decrumb_labels(labels: np.ndarray, min_size: int = 5, in_place=False, flatten=True):
     """Remove small units
 
     Parameters
@@ -539,27 +538,34 @@ def decrumb(labels: np.ndarray, min_size: int = 5, in_place=False, flatten=True)
     labels
         The (flattened) decrumbed labels.
     """
-    kept = np.flatnonzero(labels >= 0)
-    labels_kept = labels[kept]
-    labels = labels if in_place else labels.copy()
-
-    units_sparse, counts_sparse = np.unique(labels_kept, return_counts=True)
-    if not units_sparse.size:
+    units, counts, _ = pos_int_unique_and_counts(labels)
+    if (not units.size) or (counts.min() >= min_size):
         return labels
-
-    k = units_sparse.max() + 1
-    counts = np.zeros(k, dtype=counts_sparse.dtype)
-    counts[units_sparse] = counts_sparse
-    units = np.arange(k)
-
-    big_enough = counts >= min_size
-    k1 = big_enough.sum()
-    units[np.logical_not(big_enough)] = -1
+    remapping = np.full((units.max() + 1,), -1, dtype=labels.dtype)
+    kept_units = units[counts >= min_size]
     if flatten:
-        units[big_enough] = np.arange(k1)
+        remapping[kept_units] = np.arange(len(kept_units))
+    else:
+        remapping[kept_units] = kept_units
+    new_labels = labels if in_place else labels.copy()
+    apply_label_remapping_in_place(new_labels, remapping)
+    logger.dartsortdebug(f"decrumb ({min_size}): {units.size}->{kept_units.size}.")
+    return new_labels
 
-    logger.dartsortdebug(f"decrumb ({min_size}): {k}->{k1}.")
 
-    labels[kept] = units[labels_kept]
+def decrumb(
+    sorting: DARTsortSorting, min_size: int = 5, in_place=False, flatten=True
+) -> DARTsortSorting:
+    assert sorting.labels is not None
+    units, counts, _ = pos_int_unique_and_counts(sorting.labels)
+    if (not units.size) or (counts.min() >= min_size):
+        return sorting
 
-    return labels
+    remapping = np.full((units.max() + 1,), -1, dtype=sorting.labels.dtype)
+    kept_units = units[counts >= min_size]
+    remapping[kept_units] = kept_units
+    new_labels = sorting.labels if in_place else sorting.labels.copy()
+    apply_label_remapping_in_place(new_labels, remapping)
+    if flatten:
+        sorting = sorting.flatten(in_place=in_place)
+    return sorting

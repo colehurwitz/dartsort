@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from dartsort.clustering.cluster_util import decrumb, recluster, reorder_by_depth
+from dartsort.clustering.cluster_util import decrumb_labels, recluster, reorder_by_depth
 from dartsort.util.data_util import DARTsortSorting
 
 
@@ -72,7 +72,7 @@ def test_decrumb(n_units):
     counts = np.where(np.arange(n_units) % 2 == 0, 10, 2)
     labels = np.repeat(np.arange(n_units), counts)
 
-    new_labels = decrumb(labels, min_size=min_size)
+    new_labels = decrumb_labels(labels, min_size=min_size)
 
     # big units are relabeled 0, 1, 2, ... in original order
     for new_id, old_id in enumerate(range(0, n_units, 2)):

@@ -10,7 +10,7 @@ from scipy.spatial import KDTree
 from sklearn.decomposition import PCA, TruncatedSVD
 from spikeinterface.core import BaseRecording
 
-from ..util.data_util import DARTsortSorting
+from ..util.data_util import DARTsortSorting, apply_label_remapping_in_place
 from ..util.internal_config import (
     ComputationConfig,
     FeaturizationConfig,
@@ -72,10 +72,10 @@ def estimate_template_library(
 
     # avoid blanks down the line
     if min_template_count:
-        from ..clustering.cluster_util import decrumb
+        from ..clustering.cluster_util import decrumb_labels
 
         sorting = sorting.ephemeral_replace(
-            labels=decrumb(sorting.labels, min_size=min_template_count)
+            labels=decrumb_labels(sorting.labels, min_size=min_template_count)
         )
 
     # realign sorting and estimate template snr
@@ -242,9 +242,9 @@ def realign_and_chuck_noisy_template_units(
 
     assert sorting.labels is not None
     new_labels = sorting.labels.copy()
-    valid = np.isin(new_labels, unique_good_unit_ids)
-    new_labels[~valid] = -1
-    _, new_labels[valid] = np.unique(new_labels[valid], return_inverse=True)
+    label_remapping = np.full((unique_good_unit_ids.max() + 1,), -1)
+    label_remapping[unique_good_unit_ids] = np.arange(len(unique_good_unit_ids))
+    apply_label_remapping_in_place(new_labels, label_remapping, allow_over=True)
 
     new_sorting = sorting.ephemeral_replace(labels=new_labels)
     new_template_data = TemplateData(

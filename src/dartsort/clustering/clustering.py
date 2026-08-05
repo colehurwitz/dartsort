@@ -474,7 +474,7 @@ class DensityPeaksClusterer(Clusterer):
             del kres
             cleanup_and_log_gpu_usage(self.computation_cfg, "DPC->kmeans")
 
-        labels = cluster_util.decrumb(
+        labels = cluster_util.decrumb_labels(
             labels, min_size=self.remove_clusters_smaller_than, in_place=True
         )
 
