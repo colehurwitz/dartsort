@@ -12,9 +12,10 @@ TODO:
 """
 
 import sys
+from collections.abc import Sequence
 from dataclasses import replace
 from math import fabs
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch

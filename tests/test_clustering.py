@@ -86,6 +86,7 @@ def test_clustering(simulations, sim_name, featkw, cluskw):
     if cluskw["cluster_strategy"] == "density_peaks_uhdversion":
         if not featkw["use_amplitude"]:
             return
+        featkw = featkw | {"need_xyza": True}
     sim = simulations[sim_name]
     recording = sim["recording"]
     sorting = sim["sorting"]

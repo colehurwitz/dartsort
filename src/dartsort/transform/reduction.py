@@ -48,18 +48,15 @@ class TemplateWaveformReducer(BaseWaveformFeaturizer):
             pfx = ""
         else:
             pfx = name_prefix + "_"
-        if not self.online:
-            names = [f"{pfx}{_my_name}"]
-        else:
-            names = []
+        names = [] if self.online else [f"{pfx}{_my_name}"]
         super().__init__(geom=geom, channel_index=channel_index, name=names)
         self.name_prefix = name_prefix
         self.reduction = reduction
         self.n_units = n_units
         self.feature_dim = feature_dim
         self.output_channels = output_channels
-        self.shape = [(self.feature_dim, output_channels)]
-        self.dtype = [dtype]
+        self.shape = [] if self.online else [(self.feature_dim, output_channels)]
+        self.dtype = [] if self.online else [dtype]
         self.with_raw_std_dev = with_raw_std_dev
         self._initialize((self.feature_dim, output_channels))
 
