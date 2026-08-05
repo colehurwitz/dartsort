@@ -178,7 +178,7 @@ def estimate_template_library(
 
     # re-order along probe length
     if depth_order:
-        sorting, templates = reorder_by_depth(sorting, templates)
+        sorting, templates = reorder_templates_by_depth(sorting, templates)
 
     return sorting, ensure_save(templates, template_npz_path)
 
@@ -336,7 +336,7 @@ def snr_mask(template_data, min_n_spikes=50, min_template_snr=15.0):
     return good_templates
 
 
-def reorder_by_depth(sorting, template_data):
+def reorder_templates_by_depth(sorting, template_data):
     assert template_data.registered_geom is not None
     w = template_data.snrs_by_channel()
     w /= w.sum(axis=1, keepdims=True)

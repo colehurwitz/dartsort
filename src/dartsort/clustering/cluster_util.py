@@ -332,7 +332,6 @@ def reorder_by_depth(
     geom: np.ndarray | None = None,
     centroids: np.ndarray | None = None,
     in_place: bool = False,
-    is_flat: bool = False,
 ) -> tuple[DARTsortSorting, np.ndarray]:
     """Reorder cluster labels so that centroid depth is increasing
 
@@ -350,9 +349,7 @@ def reorder_by_depth(
     reorder: np.ndarray
         reorder[j] is the new label of original unit j.
     """
-
-    if not is_flat:
-        sorting = sorting.flatten(include_gmm_properties=True, in_place=in_place)
+    sorting = sorting.flatten(include_gmm_properties=True, in_place=in_place)
     assert sorting.labels is not None
 
     if geom is None and motion is not None:
@@ -540,9 +537,11 @@ def decrumb_labels(labels: np.ndarray, min_size: int = 5, in_place=False, flatte
         The (flattened) decrumbed labels.
     """
     units, counts, _ = pos_int_unique_and_counts(labels)
+    if not units.size:
+        return labels
     all_big = counts.min() >= min_size
     flat_ok = (not flatten) or np.array_equal(units, np.arange(len(units)))
-    if (not units.size) or (all_big and flat_ok):
+    if all_big and flat_ok:
         return labels
     remapping = np.full((units.max() + 1,), -1, dtype=labels.dtype)
     kept_units = units[counts >= min_size]
@@ -561,7 +560,11 @@ def decrumb(
 ) -> DARTsortSorting:
     assert sorting.labels is not None
     units, counts, _ = pos_int_unique_and_counts(sorting.labels)
-    if (not units.size) or (counts.min() >= min_size):
+    if not units.size:
+        return sorting
+    all_big = counts.min() >= min_size
+    flat_ok = (not flatten) or np.array_equal(units, np.arange(len(units)))
+    if all_big and flat_ok:
         return sorting
 
     remapping = np.full((units.max() + 1,), -1, dtype=sorting.labels.dtype)

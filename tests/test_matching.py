@@ -185,7 +185,7 @@ def test_no_crumbs(subtests, refractory_sim, method, cd_iter, channel_selection_
     np.testing.assert_allclose(gt_up_templates, match_up_templates, atol=2.5e-3)
 
     # difference between upsampling before going to multichan or after...
-    true_temps_up = gt_sorting._load_dataset("templates_up")
+    true_temps_up = gt_sorting.load_dataset("templates_up")
     true_temps_up = true_temps_up.astype(np.float32)
     np.testing.assert_allclose(gt_up_templates, true_temps_up, atol=1e-4)
     up_err = np.abs(gt_up_templates - true_temps_up).max() * (1 + 1e-5 + scaling)

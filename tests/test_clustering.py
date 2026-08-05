@@ -10,7 +10,7 @@ from dartsort.clustering import (
     refinement_strategies,
 )
 from dartsort.main import cluster
-from dartsort.templates.postprocess_util import reorder_by_depth
+from dartsort.templates.postprocess_util import reorder_templates_by_depth
 from dartsort.util.internal_config import (
     ClusteringConfig,
     ClusteringFeaturesConfig,
@@ -208,7 +208,7 @@ def test_reorder_by_depth(simulations, sim_name):
     sorting = sim["sorting"]
     template_data = sim["templates"]
 
-    sorting1, template_data1 = reorder_by_depth(sorting, template_data)
+    sorting1, template_data1 = reorder_templates_by_depth(sorting, template_data)
 
     assert np.array_equal(sorting.times_samples, sorting1.times_samples)
     assert np.array_equal(sorting.channels, sorting1.channels)

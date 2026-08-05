@@ -115,7 +115,7 @@ def test_denoiser_alignment(align_sim, align_templates):
     ci = dartsort.waveform_util.full_channel_index(1, to_torch=True)
     rec = align_sim["recording"]
     gt_st = align_sim["sorting"]
-    noise_wfs = gt_st._load_dataset("noise_waveforms")
+    noise_wfs = gt_st.load_dataset("noise_waveforms")
 
     # an optimal linear denoiser
     rolls = (-1, 0, 1)

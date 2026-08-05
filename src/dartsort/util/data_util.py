@@ -936,11 +936,12 @@ class DARTsortSorting:
         old_unique, _, _ = pos_int_unique_and_counts(self.labels)
         old_K = old_unique.max() + 1 if old_unique.shape[0] > 0 else 0
         if np.array_equal(old_unique, np.arange(old_K)):
-            return self
-
-        new_labels = self.labels if in_place else self.labels.copy()
-        remap = flatten_remapping(old_unique)
-        apply_label_remapping_in_place(new_labels, remap)
+            new_labels = self.labels
+            remap = np.arange(old_K)
+        else:
+            new_labels = self.labels if in_place else self.labels.copy()
+            remap = flatten_remapping(old_unique)
+            apply_label_remapping_in_place(new_labels, remap)
 
         keys = ("merged_candidates", "gmm_candidates")
         if not include_gmm_properties or not any(hasattr(self, k) for k in keys):
@@ -1038,7 +1039,6 @@ class DARTsortSorting:
             return dataset_name in h5
 
     def load_dataset(self, dataset_name: str, sl=()) -> np.ndarray:
-
         if dataset_name in self._ephemeral_features:
             return self._ephemeral_features[dataset_name][sl]
         if dataset_name in self._persistent_features:
