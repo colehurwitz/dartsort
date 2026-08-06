@@ -40,6 +40,63 @@ def template_library():
     return templates, geom
 
 
+@pytest.mark.parametrize("interp_method", ["dart", "griddata", "grid_sample"])
+def test_template_library_identity(template_library, interp_method):
+    """Interpolating a library onto its own geometry gives the library back."""
+    templates, geom = template_library
+    sim = sim_template_tools.TemplateLibrarySimulator.from_template_library(
+        source_geom=geom,
+        n_units=len(templates),
+        templates=templates,
+        extract_radius=250.0,
+        interp_method=interp_method,
+    )
+    _, interpolated, _ = sim.templates()
+    # the library is not exactly recoverable: it's been svd truncated
+    np.testing.assert_allclose(
+        interpolated, templates, atol=1e-3 * np.ptp(templates, 1).max()
+    )
+
+
+def test_grid_sample_cross_geom(template_library):
+    templates, geom = template_library
+    target_geom = simlib.generate_geom(num_contact_per_column=12)
+    sim = sim_template_tools.TemplateLibrarySimulator.from_template_library(
+        source_geom=geom,
+        target_geom=target_geom,
+        n_units=len(templates),
+        templates=templates,
+        extract_radius=250.0,
+        depth_jitter=float("inf"),
+        interp_method="grid_sample",
+    )
+    _, interpolated, _ = sim.templates()
+
+    bot = sim.pos_local.min(axis=1)
+    top = sim.pos_local.max(axis=1)
+
+    # the source grid centered in x
+    x_bot = bot[:, 0].min()
+    x_top = top[:, 0].max()
+    assert x_bot > target_geom[:, 0].min() and x_top < target_geom[:, 0].max()
+    assert np.isclose(x_bot + x_top, target_geom[:, 0].min() + target_geom[:, 0].max())
+
+    # check it's zero padded
+    # default bicubic zero padding reads 4x4 neighborhoods, so this
+    # condition has to check with a radius of 2 pitches
+    pitch = np.array([np.diff(np.unique(geom[:, j])).min() for j in (0, 1)])
+    far = np.logical_or(
+        target_geom < bot[:, None] - 2 * pitch,
+        target_geom > top[:, None] + 2 * pitch,
+    )
+    far = far.any(axis=2)
+    assert far.any() and not far.all()
+    np.testing.assert_array_equal(interpolated.transpose(0, 2, 1)[far], 0.0)
+
+    # check not too much overshooting
+    assert np.ptp(interpolated, 1).max() <= 1.05 * np.ptp(templates, 1).max()
+
+
 @pytest.mark.parametrize("globally_refractory", [False, True])
 @pytest.mark.parametrize("noise_kind", ["zero", "white"])
 def test_exact_injections(tmp_path, globally_refractory, noise_kind):
@@ -116,8 +173,9 @@ def test_exact_injections(tmp_path, globally_refractory, noise_kind):
 
 @pytest.mark.parametrize("globally_refractory", [False])
 # @pytest.mark.parametrize("globally_refractory", [False, True])
-@pytest.mark.parametrize("templates_kind", ["3exp", "library"])
-# @pytest.mark.parametrize("noise_kind", ["zero", "white", "stationary_factorized_rbf"])
+@pytest.mark.parametrize(
+    "templates_kind", ["3exp", "library", "library-grid_sample"]
+)
 @pytest.mark.parametrize("noise_kind", ["zero", "white", "stationary_factorized_rbf"])
 def test_reproducible_and_residual(
     tmp_path, globally_refractory, templates_kind, noise_kind, template_library
@@ -126,13 +184,13 @@ def test_reproducible_and_residual(
 
     kw = {}
     temp_sim_kw = {}
-    if templates_kind.startswith("library"):
+    templates_kind, interp_method = templates_kind.split("-")
+    if templates_kind == "library":
         kw["template_library"] = template_library[0]
         temp_sim_kw["source_geom"] = template_library[1]
         temp_sim_kw["depth_jitter"] = float("inf")
-    if templates_kind == "librarygrid":
-        temp_sim_kw["interp_method"] = "griddata"
-        temp_sim_kw["griddata_method"] = "linear"
+    if interp_method:
+        temp_sim_kw["interp_method"] = interp_method
 
     for j, n_jobs in enumerate((1, 4)):
         torch.manual_seed(0)
@@ -146,7 +204,7 @@ def test_reproducible_and_residual(
             computation_cfg=ComputationConfig.from_n_jobs(n_jobs),
             sampling_frequency=10_000.0,
             duration_seconds=8.1,
-            templates_kind=templates_kind.removesuffix("grid"),
+            templates_kind=templates_kind,
             template_simulator_kwargs=temp_sim_kw,
             **kw,  # type: ignore  # ty: ignore[x]
         )
