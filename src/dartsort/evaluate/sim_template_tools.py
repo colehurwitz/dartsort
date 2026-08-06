@@ -435,7 +435,9 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
 
         if target_geom is None:
             target_geom = source_geom
-        same_probe = source_geom.shape == target_geom.shape and np.allclose(source_geom, target_geom)
+        same_probe = source_geom.shape == target_geom.shape and np.allclose(
+            source_geom, target_geom
+        )
 
         if templates.shape[0] > n_units:
             choices = rg.choice(len(templates), size=n_units, replace=False)
@@ -464,9 +466,12 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
             source_geom.astype(dtype), [(0, 1), (0, 0)], constant_values=np.nan
         )
         templatesp = np.pad(templates, [(0, 0), (0, 0), (0, 1)], constant_values=np.nan)
-        pos_local = geomp[template_channels]
+        template_channels_np = template_channels
+        if isinstance(template_channels_np, torch.Tensor):
+            template_channels_np = template_channels_np.numpy(force=True)
+        pos_local = geomp[template_channels_np]
         templates_local = np.take_along_axis(
-            templatesp, template_channels[:, None], axis=2
+            templatesp, template_channels_np[:, None], axis=2
         )
 
         if depths is not None:
@@ -487,7 +492,6 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
         else:
             assert depth_jitter == 0
             assert same_probe
-
 
         if not same_probe:
             # try to center them in x, but...
@@ -689,7 +693,7 @@ def simulate_source_locations(
     elif alpha_family == "uniform":
         alpha = rg.uniform(alpha_min, alpha_max, size=size)
     else:
-        assert False
+        panic(alpha_family)
 
     pos = np.c_[x, orth, z].astype(dtype)
     alpha = alpha.astype(dtype)[:, None]
