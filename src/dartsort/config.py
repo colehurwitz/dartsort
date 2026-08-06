@@ -123,7 +123,7 @@ class DARTsortUserConfig:
     alignment_ms: Annotated[float, Field(gt=0)] = 1.5
     """Largest time shift allowed when re-aligning events."""
 
-    deduplication_ms: Annotated[float, Field(gt=0)] = 0.5
+    deduplication_ms: Annotated[float, Field(gt=0)] = 0.25
     """As a final postprocessing step, only the higher-scoring of any spikes within
     this time radius of each other are kept.
     If this is negative, it does nothing. If it's 0, exact duplicates are dropped.
