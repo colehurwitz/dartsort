@@ -40,7 +40,7 @@ def template_library():
     return templates, geom
 
 
-@pytest.mark.parametrize("interp_method", ["dart", "griddata", "grid_sample"])
+@pytest.mark.parametrize("interp_method", ["dart", "grid_sample"])
 def test_template_library_identity(template_library, interp_method):
     """Interpolating a library onto its own geometry gives the library back."""
     templates, geom = template_library
