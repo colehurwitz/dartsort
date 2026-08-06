@@ -469,7 +469,8 @@ def initial_detection(
         _nspk = cfg.subsampling_spikes_per_channel * recording.get_num_channels()
     if cfg.detection_type == "subtract":
         assert isinstance(cfg.initial_detection_cfg, SubtractionConfig)
-        return subtract(
+        assert not cfg.initial_detection_cfg.fit_only  # this would not detect anything
+        sorting = subtract(
             output_dir=output_dir,
             recording=recording,
             waveform_cfg=cfg.waveform_cfg,
@@ -483,6 +484,8 @@ def initial_detection(
             show_progress=show_progress,
             load_simple_features=load_simple_features,
         )
+        assert sorting is not None
+        return sorting
     elif cfg.detection_type == "threshold":
         assert isinstance(cfg.initial_detection_cfg, ThresholdingConfig)
         return threshold(
@@ -539,7 +542,7 @@ def subtract(
     hdf5_filename="subtraction.h5",
     model_subdir="subtraction_models",
     load_simple_features: bool = True,
-) -> DARTsortSorting:
+) -> DARTsortSorting | None:
     output_dir = ensure_path(output_dir)
     computation_cfg = ensure_computation_config(computation_cfg)
     subtraction_peeler = SubtractionPeeler.from_config(
@@ -549,7 +552,7 @@ def subtract(
         subtraction_cfg=subtraction_cfg,
         featurization_cfg=featurization_cfg,
     )
-    detections = run_peeler(
+    detection_path = run_peeler(
         subtraction_peeler,
         output_directory=output_dir,
         hdf5_filename=hdf5_filename,
@@ -564,13 +567,19 @@ def subtract(
         stop_after_n_spikes=stop_after_n_spikes,
         ensure_coverage=ensure_coverage,
         shuffle=shuffle,
-        load_simple_features=load_simple_features,
     )
 
     del subtraction_peeler
     cleanup_and_log_gpu_usage(computation_cfg, f"Post subtract ({hdf5_filename}):")
 
-    return detections
+    if detection_path is not None:
+        sorting = DARTsortSorting.from_peeling_hdf5(
+            detection_path, load_simple_features=load_simple_features
+        )
+    else:
+        sorting = None
+
+    return sorting
 
 
 def match(
@@ -655,7 +664,7 @@ def match(
         template_data=template_data,
         motion=motion,
     )
-    sorting = run_peeler(
+    sorting_path = run_peeler(
         matching_peeler,
         output_directory=output_dir,
         hdf5_filename=hdf5_filename,
@@ -669,11 +678,15 @@ def match(
         skip_resid_snips=skip_resid_snips,
         show_progress=show_progress,
         computation_cfg=computation_cfg,
-        load_simple_features=load_simple_features,
     )
 
     del matching_peeler
     cleanup_and_log_gpu_usage(computation_cfg, f"Post match ({hdf5_filename}):")
+
+    assert sorting_path is not None
+    sorting = DARTsortSorting.from_peeling_hdf5(
+        sorting_path, load_simple_features=load_simple_features
+    )
 
     return sorting
 
@@ -693,6 +706,7 @@ def grab(
     computation_cfg: ComputationConfig | None = None,
 ) -> DARTsortSorting:
     output_dir = ensure_path(output_dir)
+    computation_cfg = ensure_computation_config(computation_cfg)
     grabber = GrabAndFeaturize.from_config(
         sorting=sorting,
         recording=recording,
@@ -700,7 +714,7 @@ def grab(
         sampling_cfg=sampling_cfg,
         featurization_cfg=featurization_cfg,
     )
-    sorting = run_peeler(
+    sorting_path = run_peeler(
         grabber,
         output_directory=output_dir,
         hdf5_filename=hdf5_filename,
@@ -711,6 +725,13 @@ def grab(
         show_progress=show_progress,
         computation_cfg=computation_cfg,
     )
+
+    del grabber
+    cleanup_and_log_gpu_usage(computation_cfg, f"Post grab ({hdf5_filename}):")
+
+    assert sorting_path is not None
+    sorting = DARTsortSorting.from_peeling_hdf5(sorting_path)
+
     return sorting
 
 
@@ -744,7 +765,7 @@ def threshold(
         extract_channel_index=extract_channel_index,
         sampling_cfg=sampling_cfg,
     )
-    sorting = run_peeler(
+    sorting_path = run_peeler(
         thresholder,
         output_directory=output_dir,
         hdf5_filename=hdf5_filename,
@@ -756,11 +777,15 @@ def threshold(
         overwrite=overwrite,
         show_progress=show_progress,
         computation_cfg=computation_cfg,
-        load_simple_features=load_simple_features,
     )
 
     del thresholder
     cleanup_and_log_gpu_usage(computation_cfg, f"Post threshold ({hdf5_filename}):")
+
+    assert sorting_path is not None
+    sorting = DARTsortSorting.from_peeling_hdf5(
+        sorting_path, load_simple_features=load_simple_features
+    )
 
     return sorting
 

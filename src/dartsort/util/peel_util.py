@@ -36,8 +36,7 @@ def run_peeler(
     ensure_coverage: float | None = None,
     shuffle: bool = False,
     localization_dataset_name="point_source_localizations",
-    load_simple_features: bool = True,
-):
+) -> Path | None:
     output_directory = ensure_path(output_directory)
     output_directory.mkdir(exist_ok=True)
     model_dir = output_directory / model_subdir
@@ -77,13 +76,7 @@ def run_peeler(
         shuffle=is_subsampling or shuffle,
         n_residual_snips=n_resid_snips,
     ):
-        del peeler
-        cleanup_and_log_gpu_usage(
-            computation_cfg=computation_cfg, message=f"{peel_name} already done"
-        )
-        return DARTsortSorting.from_peeling_hdf5(
-            output_hdf5_filename, load_simple_features=load_simple_features
-        )
+        return output_hdf5_filename
 
     # ensure torch linalg inits before launching threads...
     _ensure_torch_linalg(computation_cfg)
@@ -94,7 +87,7 @@ def run_peeler(
             model_dir, overwrite=overwrite, computation_cfg=computation_cfg
         )
         if fit_only:
-            return
+            return None
 
     # run main
     if peeler.featurization_pipeline is not None:
@@ -157,14 +150,7 @@ def run_peeler(
             localization_model=featurization_cfg.localization_model,
         )
 
-    del peeler
-    cleanup_and_log_gpu_usage(
-        computation_cfg=computation_cfg, message=f"After {peel_name}"
-    )
-
-    return DARTsortSorting.from_peeling_hdf5(
-        output_hdf5_filename, load_simple_features=load_simple_features
-    )
+    return output_hdf5_filename
 
 
 def peeler_is_done(
