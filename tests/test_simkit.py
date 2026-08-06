@@ -174,7 +174,7 @@ def test_exact_injections(tmp_path, globally_refractory, noise_kind):
 @pytest.mark.parametrize("globally_refractory", [False])
 # @pytest.mark.parametrize("globally_refractory", [False, True])
 @pytest.mark.parametrize(
-    "templates_kind", ["3exp", "library", "library-grid_sample"]
+    "templates_kind", ["3exp-", "library-dart", "library-grid_sample"]
 )
 @pytest.mark.parametrize("noise_kind", ["zero", "white", "stationary_factorized_rbf"])
 def test_reproducible_and_residual(
