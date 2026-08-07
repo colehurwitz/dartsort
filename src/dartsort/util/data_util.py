@@ -935,6 +935,7 @@ class DARTsortSorting:
 
         old_unique, _, _ = pos_int_unique_and_counts(self.labels)
         old_K = old_unique.max() + 1 if old_unique.shape[0] > 0 else 0
+        new_K = old_unique.shape[0]
         if np.array_equal(old_unique, np.arange(old_K)):
             new_labels = self.labels
             remap = np.arange(old_K)
@@ -944,14 +945,19 @@ class DARTsortSorting:
             apply_label_remapping_in_place(new_labels, remap)
 
         keys = ("merged_candidates", "gmm_candidates")
-        if not include_gmm_properties or not any(hasattr(self, k) for k in keys):
+        if not include_gmm_properties or not any(self.has_dataset(k) for k in keys):
             return self.ephemeral_replace(labels=new_labels)
 
         new_props = dict(labels=new_labels)
         for k in keys:
-            candidates = getattr(self, k, None)
-            if candidates is None:
+            if in_place and self.has_dataset_on_disk_not_loaded(k):
+                assert self.parent_h5_path is not None
+                _gmm_remap_on_disk(self.parent_h5_path, remap, prefix=k.split("_")[0])
+                break
+            if not self.has_dataset(k):
                 continue
+            candidates = getattr(self, k)
+            assert candidates is not None
 
             new_candidates = candidates if in_place else candidates.copy()
             apply_label_remapping_in_place(new_candidates, remap, allow_over=True)
@@ -966,9 +972,7 @@ class DARTsortSorting:
             if not in_place:
                 resps = resps.copy()
                 logliks = logliks.copy()
-            vacuum_neg_candidate_prob(
-                old_unique.shape[0], new_candidates, resps, logliks
-            )
+            vacuum_neg_candidate_prob(new_K, new_candidates, resps, logliks)
 
             new_props[k] = new_candidates
             new_props[resp_key] = resps
@@ -1037,6 +1041,21 @@ class DARTsortSorting:
             return False
         with h5py.File(self.parent_h5_path, "r", locking=False) as h5:
             return dataset_name in h5
+
+    def has_dataset_on_disk_not_loaded(self, dataset_name: str) -> bool:
+        if self.parent_h5_path is None:
+            return False
+        if not self.parent_h5_path.exists():
+            return False
+        with h5py.File(self.parent_h5_path, "r", locking=False) as h5:
+            if dataset_name not in h5:
+                return False
+        # if we got here, dataset is on disk
+        if dataset_name in self._ephemeral_features:
+            return False
+        if dataset_name in self._persistent_features:
+            return False
+        return True
 
     def load_dataset(self, dataset_name: str, sl=()) -> np.ndarray:
         if dataset_name in self._ephemeral_features:
@@ -2173,6 +2192,48 @@ def divide_randomly(
     assert things_per_bin.sum() == n_things
 
     return things_per_bin
+
+
+def _gmm_remap_on_disk(
+    hdf5_path: Path, remap: np.ndarray, prefix: str, default_len=4096 * 64
+):
+    ck = f"{prefix}_candidates"
+    lk = f"{prefix}_log_liks"
+    rk = f"{prefix}_responsibilities"
+    new_K = remap.max() + 1
+    with h5py.File(hdf5_path, "r+") as h5:
+        assert ck in h5
+        assert lk in h5
+        assert rk in h5
+        cd = h5[ck]
+        ld = h5[lk]
+        rd = h5[rk]
+
+        chunk_len = default_len
+        for dd in (cd, ld, rd):
+            if dd.chunks is None:
+                continue
+            for c, s in zip(dd.chunks[1:], dd.shape[1:], strict=True):
+                if c != s:
+                    raise ValueError(f"{dd.shape=} {dd.chunks=}")
+            chunk_len = max(dd.chunks[0], chunk_len)
+            if chunk_len % dd.chunks[0]:
+                logger.warning(f"Unaligned {chunk_len=} {dd.chunks=}")
+
+        n = cd.shape[0]
+        assert n == ld.shape[0] == rd.shape[0]
+        for i0 in range(0, n, chunk_len):
+            i1 = min(i0 + chunk_len, n)
+
+            cand = cd[i0:i1]
+            apply_label_remapping_in_place(cand, remap, allow_over=True)
+            resp = rd[i0:i1]
+            loglik = ld[i0:i1]
+            vacuum_neg_candidate_prob(new_K, cand, resp, loglik)
+
+            cd[i0:i1] = cand
+            rd[i0:i1] = resp
+            ld[i0:i1] = loglik
 
 
 @numba.njit(parallel=True)
