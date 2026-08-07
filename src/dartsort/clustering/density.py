@@ -11,7 +11,7 @@ from scipy.spatial import KDTree
 from ..util.logging_util import DARTSORTVERBOSE, get_logger, progbar, progrange
 from ..util.multiprocessing_util import get_pool
 from ..util.spiketorch import sqeuc_cdist_known_norm
-from .cluster_util import decrumb
+from .cluster_util import decrumb_labels
 
 logger = get_logger(__name__)
 
@@ -601,7 +601,7 @@ def density_peaks(
         )
 
     if remove_clusters_smaller_than:
-        labels = decrumb(labels, min_size=remove_clusters_smaller_than, in_place=True)
+        labels = decrumb_labels(labels, min_size=remove_clusters_smaller_than, in_place=True)
 
     return dict(density=density, nhdn=nhdn, labels=labels, kdtree=kdtree)
 
@@ -798,7 +798,7 @@ def gmm_density_peaks(
     if remove_clusters_smaller_than:
         if show_progress:
             logger.info("Clean...")
-        labels = decrumb(labels, min_size=remove_clusters_smaller_than, in_place=True)
+        labels = decrumb_labels(labels, min_size=remove_clusters_smaller_than, in_place=True)
     res["labels"] = labels
 
     if mop:
@@ -1228,7 +1228,7 @@ def _density_peaks_clustering_uhd_implementation(
         )
 
     if remove_clusters_smaller_than:
-        labels = decrumb(labels, min_size=remove_clusters_smaller_than)
+        labels = decrumb_labels(labels, min_size=remove_clusters_smaller_than)
 
     if triage_quantile_per_cluster:
         assert scales is not None

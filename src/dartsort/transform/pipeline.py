@@ -1,8 +1,8 @@
 """A class which manages pipelines of denoisers and featurizers"""
 
+from collections.abc import Sequence
 from copy import deepcopy
 from pathlib import Path
-from typing import Sequence
 
 import torch
 from spikeinterface.core import BaseRecording
@@ -341,7 +341,7 @@ class WaveformPipeline(torch.nn.Module):
             if transformer.is_featurizer and transformer.is_denoiser:
                 waveforms, new_features = transformer(**features)
                 features.update(waveforms=waveforms, **new_features)
-            elif transformer.is_featurizer:
+            elif transformer.is_featurizer and transformer.featurize_in_fit:
                 assert isinstance(transformer, BaseWaveformFeaturizer)
                 features.update(transformer.transform(**features))
             elif transformer.is_denoiser:
@@ -372,7 +372,7 @@ class WaveformPipeline(torch.nn.Module):
     def transform_to_disk(
         self,
         hdf5_filename: str | Path,
-        waveforms_dataset_name: str | None = "waveforms",
+        waveforms_dataset_name: str = "waveforms",
         other_dset_names: Sequence[str] | None = None,
         start_index: int | None = None,
         up_to_index: int | None = None,
@@ -409,7 +409,6 @@ class WaveformPipeline(torch.nn.Module):
         with File(hdf5_filename, mode="r+", libver="latest", locking=False) as h5:
             if all(ds.name in h5 for ds in datasets):
                 return
-            wfs = h5[waveforms_dataset_name] if waveforms_dataset_name else None
             other_dsets = {od: h5[od] for od in other_dset_names}
             outs = {
                 ds.name: h5.create_dataset(
@@ -418,7 +417,9 @@ class WaveformPipeline(torch.nn.Module):
                 for ds in datasets
             }
             for sli, chk in yield_chunks(
-                wfs, desc_prefix="Transform to disk", show_progress=False
+                h5[waveforms_dataset_name],
+                desc_prefix="Transform to disk",
+                show_progress=False,
             ):
                 chk_fp = {k: v[sli].to(device=dev) for k, v in fixed_properties.items()}
                 other_fp = {

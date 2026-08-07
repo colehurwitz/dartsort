@@ -1,5 +1,6 @@
+from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Self
+from typing import TYPE_CHECKING, Any, Self
 
 import torch
 from spikeinterface.core import BaseRecording
@@ -25,6 +26,7 @@ class BaseWaveformModule(BModule):
     needs_residual = False
     fits_from_disk = False
     needs_more_features = False
+    featurize_in_fit = False
 
     def __init__(
         self,
@@ -231,7 +233,7 @@ class BaseWaveformFeaturizer(BaseWaveformModule):
                     shape_per_spike=s,
                     dtype=str(d).split(".")[1],
                 )
-                for n, s, d in zip(self.name, self.shape, self.dtype)
+                for n, s, d in zip(self.name, self.shape, self.dtype, strict=True)
             ]
             return datasets
         else:
@@ -321,6 +323,7 @@ class IdentityWaveformDenoiser(BaseWaveformDenoiser):
 
 class Waveform(BaseWaveformFeaturizer):
     default_name = "waveforms"
+    featurize_in_fit = True
 
     def __init__(
         self,

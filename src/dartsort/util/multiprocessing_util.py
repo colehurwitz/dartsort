@@ -197,7 +197,7 @@ def get_pool(
         elif cls == "MockPoolExecutor":
             cls = MockPoolExecutor
         else:
-            assert False
+            raise ValueError(str(cls))
     elif isinstance(cls, str):
         cls = MockPoolExecutor
 

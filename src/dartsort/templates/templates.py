@@ -122,8 +122,6 @@ class TemplateData:
             data["whiten_strategy"] = str(data["whiten_strategy"])
             if "spike_length_samples" in data:
                 del data["spike_length_samples"]  # todo: remove
-            if "parent_sorting_hdf5_path" in data:
-                del data["parent_sorting_hdf5_path"]  # todo: remove
 
             properties = {}
             for k, v in data.items():

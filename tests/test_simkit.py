@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import torch
 
-from dartsort.evaluate import simkit, simlib
+from dartsort.evaluate import sim_template_tools, simkit, simlib
 from dartsort.util.internal_config import (
     ComputationConfig,
     FeaturizationConfig,
@@ -22,9 +22,84 @@ def test_np1_geom_is_default():
     np.testing.assert_equal(np1_dense_layout, simlib.generate_geom())
 
 
+@pytest.fixture(scope="module")
+def template_library():
+    geom = simlib.generate_geom(
+        num_columns=10,
+        num_contact_per_column=10,
+        xpitch=5,
+        ypitch=5,
+        x_start=0,
+        y_start=0,
+        y_shift_per_column=[0] * 10,
+    )
+    sim = sim_template_tools.PointSource3ExpSimulator(
+        geom=geom, n_units=20, seed=0
+    )  # all other defaults
+    _, templates, _ = sim.templates()
+    return templates, geom
+
+
+@pytest.mark.parametrize("interp_method", ["dart", "grid_sample"])
+def test_template_library_identity(template_library, interp_method):
+    """Interpolating a library onto its own geometry gives the library back."""
+    templates, geom = template_library
+    sim = sim_template_tools.TemplateLibrarySimulator.from_template_library(
+        source_geom=geom,
+        n_units=len(templates),
+        templates=templates,
+        extract_radius=250.0,
+        interp_method=interp_method,
+    )
+    _, interpolated, _ = sim.templates()
+    # the library is not exactly recoverable: it's been svd truncated
+    np.testing.assert_allclose(
+        interpolated, templates, atol=1e-3 * np.ptp(templates, 1).max()
+    )
+
+
+def test_grid_sample_cross_geom(template_library):
+    templates, geom = template_library
+    target_geom = simlib.generate_geom(num_contact_per_column=12)
+    sim = sim_template_tools.TemplateLibrarySimulator.from_template_library(
+        source_geom=geom,
+        target_geom=target_geom,
+        n_units=len(templates),
+        templates=templates,
+        extract_radius=250.0,
+        depth_jitter=float("inf"),
+        interp_method="grid_sample",
+    )
+    _, interpolated, _ = sim.templates()
+
+    bot = sim.pos_local.min(axis=1)
+    top = sim.pos_local.max(axis=1)
+
+    # the source grid centered in x
+    x_bot = bot[:, 0].min()
+    x_top = top[:, 0].max()
+    assert x_bot > target_geom[:, 0].min() and x_top < target_geom[:, 0].max()
+    assert np.isclose(x_bot + x_top, target_geom[:, 0].min() + target_geom[:, 0].max())
+
+    # check it's zero padded
+    # default bicubic zero padding reads 4x4 neighborhoods, so this
+    # condition has to check with a radius of 2 pitches
+    pitch = np.array([np.diff(np.unique(geom[:, j])).min() for j in (0, 1)])
+    far = np.logical_or(
+        target_geom < bot[:, None] - 2 * pitch,
+        target_geom > top[:, None] + 2 * pitch,
+    )
+    far = far.any(axis=2)
+    assert far.any() and not far.all()
+    np.testing.assert_array_equal(interpolated.transpose(0, 2, 1)[far], 0.0)
+
+    # check not too much overshooting
+    assert np.ptp(interpolated, 1).max() <= 1.05 * np.ptp(templates, 1).max()
+
+
 @pytest.mark.parametrize("globally_refractory", [False, True])
 @pytest.mark.parametrize("noise_kind", ["zero", "white"])
-def test_exact_injections(tmp_path, tmp_path_factory, globally_refractory, noise_kind):
+def test_exact_injections(tmp_path, globally_refractory, noise_kind):
     nc = 4
     nu = nc
     nt = 1
@@ -56,9 +131,7 @@ def test_exact_injections(tmp_path, tmp_path_factory, globally_refractory, noise
         template_library=simple_template_library,
         globally_refractory=globally_refractory,
         refractory_ms=refractory_ms,
-        template_simulator_kwargs=dict(
-            trough_offset_samples=0, randomize_position=False
-        ),
+        template_simulator_kwargs=dict(trough_offset_samples=0),
         featurization_cfg=FeaturizationConfig(skip=True),
         common_reference=False,
     )
@@ -100,23 +173,24 @@ def test_exact_injections(tmp_path, tmp_path_factory, globally_refractory, noise
 
 @pytest.mark.parametrize("globally_refractory", [False])
 # @pytest.mark.parametrize("globally_refractory", [False, True])
-# @pytest.mark.parametrize("templates_kind", ["3exp", "library", "librarygrid"])
-@pytest.mark.parametrize("templates_kind", ["3exp"])
-# @pytest.mark.parametrize("noise_kind", ["zero", "white", "stationary_factorized_rbf"])
+@pytest.mark.parametrize(
+    "templates_kind", ["3exp-", "library-dart", "library-grid_sample"]
+)
 @pytest.mark.parametrize("noise_kind", ["zero", "white", "stationary_factorized_rbf"])
 def test_reproducible_and_residual(
-    tmp_path, globally_refractory, templates_kind, noise_kind
+    tmp_path, globally_refractory, templates_kind, noise_kind, template_library
 ):
     sims = []
 
     kw = {}
-    if templates_kind.startswith("library"):
-        rg = np.random.default_rng(0)
-        kw["template_library"] = 10 * rg.normal(size=(10, 121, 48))
-    if templates_kind == "librarygrid":
-        kw["template_simulator_kwargs"] = dict(
-            interp_method="griddata", griddata_method="linear"
-        )
+    temp_sim_kw = {}
+    templates_kind, interp_method = templates_kind.split("-")
+    if templates_kind == "library":
+        kw["template_library"] = template_library[0]
+        temp_sim_kw["source_geom"] = template_library[1]
+        temp_sim_kw["depth_jitter"] = float("inf")
+    if interp_method:
+        temp_sim_kw["interp_method"] = interp_method
 
     for j, n_jobs in enumerate((1, 4)):
         torch.manual_seed(0)
@@ -130,7 +204,8 @@ def test_reproducible_and_residual(
             computation_cfg=ComputationConfig.from_n_jobs(n_jobs),
             sampling_frequency=10_000.0,
             duration_seconds=8.1,
-            templates_kind=templates_kind.removesuffix("grid"),
+            templates_kind=templates_kind,
+            template_simulator_kwargs=temp_sim_kw,
             **kw,  # type: ignore  # ty: ignore[x]
         )
         sims.append(sim)

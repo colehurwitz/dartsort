@@ -70,7 +70,7 @@ def get_background_recording(
     spatial_std, spatial_vt = rbf_kernel_sqrt(
         geom, bandwidth=noise_spatial_kernel_bandwidth
     )
-    noise_temporal_kernel = noise_temporal_kernel.astype(spatial_vt.dtype) + 0j  # type: ignore
+    noise_temporal_kernel = noise_temporal_kernel.astype(spatial_vt.dtype) + 0j
     noise = StationaryFactorizedNoise(
         spatial_std=spatial_std,
         vt_spatial=spatial_vt,

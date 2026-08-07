@@ -6,7 +6,12 @@ from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial import KDTree
 
 from ..util import data_util, waveform_util
-from ..util.data_util import DARTsortSorting
+from ..util.data_util import (
+    DARTsortSorting,
+    apply_label_remapping_in_place,
+    mean_by_label_1d,
+    pos_int_unique_and_counts,
+)
 from ..util.logging_util import get_logger
 from ..util.motion import MotionInfo
 
@@ -59,9 +64,8 @@ def apply_reclustering(
     assert sorting.labels is not None
 
     if new_labels is None:
-        new_labels = np.full_like(sorting.labels, -1)
-        kept = np.flatnonzero(sorting.labels >= 0)
-        new_labels[kept] = merge_mapping[sorting.labels[kept]]
+        new_labels = sorting.labels.copy()
+        apply_label_remapping_in_place(new_labels, merge_mapping)
 
     if shifts is None:
         return sorting.ephemeral_replace(labels=new_labels)
@@ -99,7 +103,6 @@ def hierarchical_cluster(
     threshold=1.0,
     eps=1e-5,
 ):
-    """"""
     n = distances.shape[0]
     assert eps < threshold  # that would be confusing.
     if n <= 1:
@@ -117,8 +120,8 @@ def hierarchical_cluster(
         if labels is None:
             return None, np.arange(n)
         else:
-            ids = np.unique(labels)
-            return labels, ids[ids >= 0]
+            ids, _, _ = pos_int_unique_and_counts(labels)
+            return labels, ids
 
     if not finite.all():
         inf = max(0, pdist[finite].max()) + threshold + 1.0
@@ -175,8 +178,7 @@ def sparsify_labels(
 ) -> dict[int, np.ndarray]:
     assert labels.ndim == 1
     if ids is None:
-        ids = np.unique(labels)
-        ids = ids[ids >= 0]
+        ids, _, _ = pos_int_unique_and_counts(labels)
     inj = {}
     for j in ids:
         inj[j] = np.flatnonzero(labels == j)
@@ -265,7 +267,7 @@ def maximal_leaf_groups(
 
     assert max(map(len, groups)) <= max_group_size
     assert sum(map(len, groups)) == n
-    assert set(gv for g in groups for gv in g) == set(range(n))
+    assert {gv for g in groups for gv in g} == set(range(n))
 
     groups = [tuple(sorted(g)) for g in groups]
 
@@ -329,6 +331,7 @@ def reorder_by_depth(
     spatial_footprints: np.ndarray | None = None,
     geom: np.ndarray | None = None,
     centroids: np.ndarray | None = None,
+    in_place: bool = False,
 ) -> tuple[DARTsortSorting, np.ndarray]:
     """Reorder cluster labels so that centroid depth is increasing
 
@@ -346,11 +349,8 @@ def reorder_by_depth(
     reorder: np.ndarray
         reorder[j] is the new label of original unit j.
     """
+    sorting = sorting.flatten(include_gmm_properties=True, in_place=in_place)
     assert sorting.labels is not None
-    kept = np.flatnonzero(sorting.labels >= 0)
-    kept_labels = sorting.labels[kept]
-
-    units, kept_labels = np.unique(kept_labels, return_inverse=True)
 
     if geom is None and motion is not None:
         geom = motion.rgeom
@@ -359,26 +359,19 @@ def reorder_by_depth(
         assert centroids is None
         assert geom is not None
         assert spatial_footprints.shape[1] == geom.shape[0]
-        assert spatial_footprints.shape[0] == units.shape[0]
         w = spatial_footprints / spatial_footprints.sum(1, keepdims=True)
         assert np.isfinite(w).all()
         centroids = w @ geom[:, 1]
 
     if centroids is None:
-        depths = sorting.point_source_localizations[kept, 2]
+        z = sorting.load_dataset("point_source_localizations", sl=(slice(None), 2))
         if motion is not None:
-            depths = motion.correct_s(sorting.times_seconds[kept], depths)
+            z = motion.correct_s(sorting.times_seconds, z)
+        centroids = mean_by_label_1d(sorting, z)
 
-        centroids = np.zeros(units.size)
-        for u in range(units.size):
-            inu = np.flatnonzero(kept_labels == u)
-            centroids[u] = np.median(depths[inu])
-    assert centroids.shape[0] == units.shape[0]
-
-    labels = sorting.labels.copy()
-    # this one is some food for thought, lol.
+    labels = sorting.labels if in_place else sorting.labels.copy()
     reorder = np.argsort(np.argsort(centroids, kind="stable"), kind="stable")
-    labels[kept] = reorder[kept_labels]
+    apply_label_remapping_in_place(labels, reorder)
     reordered_sorting = sorting.ephemeral_replace(labels=labels)
 
     return reordered_sorting, reorder
@@ -527,7 +520,7 @@ def get_main_channel_pcs(
     return features
 
 
-def decrumb(labels: np.ndarray, min_size: int = 5, in_place=False, flatten=True):
+def decrumb_labels(labels: np.ndarray, min_size: int = 5, in_place=False, flatten=True):
     """Remove small units
 
     Parameters
@@ -543,27 +536,43 @@ def decrumb(labels: np.ndarray, min_size: int = 5, in_place=False, flatten=True)
     labels
         The (flattened) decrumbed labels.
     """
-    kept = np.flatnonzero(labels >= 0)
-    labels_kept = labels[kept]
-    labels = labels if in_place else labels.copy()
-
-    units_sparse, counts_sparse = np.unique(labels_kept, return_counts=True)
-    if not units_sparse.size:
+    units, counts, _ = pos_int_unique_and_counts(labels)
+    if not units.size:
         return labels
-
-    k = units_sparse.max() + 1
-    counts = np.zeros(k, dtype=counts_sparse.dtype)
-    counts[units_sparse] = counts_sparse
-    units = np.arange(k)
-
-    big_enough = counts >= min_size
-    k1 = big_enough.sum()
-    units[np.logical_not(big_enough)] = -1
+    all_big = counts.min() >= min_size
+    flat_ok = (not flatten) or np.array_equal(units, np.arange(len(units)))
+    if all_big and flat_ok:
+        return labels
+    remapping = np.full((units.max() + 1,), -1, dtype=labels.dtype)
+    kept_units = units[counts >= min_size]
     if flatten:
-        units[big_enough] = np.arange(k1)
+        remapping[kept_units] = np.arange(len(kept_units))
+    else:
+        remapping[kept_units] = kept_units
+    new_labels = labels if in_place else labels.copy()
+    apply_label_remapping_in_place(new_labels, remapping)
+    logger.dartsortdebug(f"decrumb ({min_size}): {units.size}->{kept_units.size}.")
+    return new_labels
 
-    logger.dartsortdebug(f"decrumb ({min_size}): {k}->{k1}.")
 
-    labels[kept] = units[labels_kept]
+def decrumb(
+    sorting: DARTsortSorting, min_size: int = 5, in_place=False, flatten=True
+) -> DARTsortSorting:
+    assert sorting.labels is not None
+    units, counts, _ = pos_int_unique_and_counts(sorting.labels)
+    if not units.size:
+        return sorting
+    all_big = counts.min() >= min_size
+    flat_ok = (not flatten) or np.array_equal(units, np.arange(len(units)))
+    if all_big and flat_ok:
+        return sorting
 
-    return labels
+    remapping = np.full((units.max() + 1,), -1, dtype=sorting.labels.dtype)
+    kept_units = units[counts >= min_size]
+    remapping[kept_units] = kept_units
+    new_labels = sorting.labels if in_place else sorting.labels.copy()
+    apply_label_remapping_in_place(new_labels, remapping)
+    sorting = sorting.ephemeral_replace(labels=new_labels)
+    if flatten:
+        sorting = sorting.flatten(in_place=in_place)
+    return sorting

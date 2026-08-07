@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING, Self
 
+import h5py
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -20,20 +21,20 @@ else:
 
 
 def interpolate_by_chunk(
-    mask,
-    dataset,
-    geom,
-    channel_index,
-    channels,
-    shifts,
-    registered_geom,
-    target_channels,
+    mask: np.ndarray | None,
+    dataset: np.ndarray | h5py.Dataset,
+    geom: np.ndarray | torch.Tensor,
+    channel_index: np.ndarray | torch.Tensor,
+    channels: np.ndarray | torch.Tensor,
+    shifts: np.ndarray | torch.Tensor,
+    registered_geom: np.ndarray | torch.Tensor,
+    target_channels: np.ndarray | torch.Tensor,
     trim_to_rank: int | None = None,
     params: InterpolationParams = tps_interp_params,
     device=None,
     store_on_device=False,
     show_progress=True,
-    shift_dim=1,
+    shift_dim: int = 1,
 ):
     """Interpolate data living in an HDF5 file
 
@@ -76,13 +77,16 @@ def interpolate_by_chunk(
     assert geom.shape[1] == 2, "Haven't implemented 3d."
     if torch.is_tensor(mask):
         mask = mask.numpy(force=True)
-    (n_spikes_full,) = mask.shape
-    assert mask.dtype.kind == "b"
-    n_spikes = mask.sum()
-    assert channels.shape == (n_spikes,)
+    n_spikes = channels.shape[0]
+    n_spikes_full = dataset.shape[0]
+    if mask is None:
+        assert n_spikes_full == n_spikes
+    else:
+        assert mask.shape == (n_spikes_full,)
+        assert mask.dtype.kind == "b"
+        assert mask.sum() == n_spikes
     n_source_chans = channel_index.shape[1]
     assert n_source_chans == dataset.shape[2]
-    assert n_spikes_full == dataset.shape[0]
     n_target_chans = target_channels.shape[1]
     assert target_channels.shape == (n_spikes, n_target_chans)
     assert shifts.shape == (n_spikes,)

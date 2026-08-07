@@ -59,7 +59,7 @@ from scipy.sparse.csgraph import connected_components
 from sympy.utilities.iterables import multiset_partitions, subsets
 from torch import Tensor
 
-from ..util.data_util import DARTsortSorting, subset_sorting_by_spike_count
+from ..util.data_util import DARTsortSorting, pos_int_unique_and_counts
 from ..util.internal_config import (
     ClusteringFeaturesConfig,
     ComponentDistanceMetric,
@@ -98,7 +98,7 @@ from ..util.spiketorch import (
     spawn_torch_rg,
 )
 from ..util.torch_util import BModule, torch_compiler
-from .cluster_util import linkage, maximal_leaf_groups
+from .cluster_util import decrumb, linkage, maximal_leaf_groups
 from .clustering_features import StableWaveformFeatures
 from .kmeans import batched_kmeans, kmeans
 
@@ -4401,10 +4401,7 @@ def get_full_neighborhood_data(
     # these are stratified by unit in order to ensure that all units are represented
     # in at least the train set rather than risking a miss with totally random sampling
     assert sorting.labels is not None
-    unit_ids, counts = np.unique(sorting.labels, return_counts=True)
-    _pos = unit_ids >= 0
-    counts = counts[_pos]
-    unit_ids = unit_ids[_pos]
+    unit_ids, counts, _ = pos_int_unique_and_counts(sorting.labels)
     fit_counts = np.minimum(
         counts, np.ceil(counts * fit_prop_of_total).astype(np.int64)
     )
@@ -4500,10 +4497,7 @@ def instantiate_and_bootstrap_tmm(
     computation_cfg = ensure_computation_config(computation_cfg)
     device = computation_cfg.actual_device()
 
-    sorting = subset_sorting_by_spike_count(
-        sorting, min_spikes=refinement_cfg.min_count
-    )
-    sorting = sorting.flatten()
+    sorting = decrumb(sorting, min_size=refinement_cfg.min_count, flatten=True)
     if not sorting.n_units:
         raise ValueError("No units to cluster.")
 

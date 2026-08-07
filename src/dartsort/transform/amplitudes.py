@@ -10,6 +10,7 @@ class AmplitudeFeatures(BaseWaveformFeaturizer):
     """Extract spike amplitudes."""
 
     is_multi = True
+    featurize_in_fit = True
 
     def __init__(
         self,
@@ -122,6 +123,7 @@ class AmplitudeFeatures(BaseWaveformFeaturizer):
 
 class AmplitudeVector(BaseWaveformFeaturizer):
     default_name = "amplitude_vectors"
+    featurize_in_fit = True
 
     def __init__(
         self,
@@ -153,6 +155,7 @@ class AmplitudeVector(BaseWaveformFeaturizer):
 
 class MaxAmplitude(BaseWaveformFeaturizer):
     default_name = "amplitudes"
+    featurize_in_fit = True
     shape = ()
 
     def __init__(

@@ -812,7 +812,7 @@ class EmbeddedNoise(BModule):
         mean_kind="zero",
         cov_kind="scalar",
         shrinkage=0.0,
-        glasso_alpha: int | float | None = None,
+        glasso_alpha: float | None = None,
         eps=1e-4,
         zero_radius: float | None = None,
         svd_batch_size=256,
@@ -1062,7 +1062,7 @@ class EmbeddedNoise(BModule):
         device=None,
         rank: int | None = None,
         shrinkage=0.0,
-        glasso_alpha: int | float | None = None,
+        glasso_alpha: float | None = None,
         zero_radius: float | None = None,
         rgeom=None,
     ):

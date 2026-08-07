@@ -10,8 +10,7 @@ from scipy.spatial.distance import pdist
 from spikeinterface.core import BaseRecording, Motion
 from torch import Tensor, asarray, is_tensor
 
-if TYPE_CHECKING:
-    from .data_util import DARTsortSorting
+from .data_util import DARTsortSorting
 from .drift_util import get_pitch, registered_geometry
 from .internal_config import (
     ComputationConfig,
@@ -28,6 +27,7 @@ from .job_util import ensure_computation_config
 from .logging_util import get_logger
 from .py_util import databag, ensure_path, panic
 from .registration_util import dredge_estimate_motion, dredge_to_si, si_to_dredge
+from .torch_util import cleanup_and_log_gpu_usage
 
 logger = get_logger(__name__)
 
@@ -513,7 +513,7 @@ def detect_for_motion(
         denoising_pipeline=denoising_pipeline,
         extract_channel_index=channel_index,
     )
-    return run_peeler(
+    shave_path = run_peeler(
         peeler=shaver,
         output_directory=output_directory,
         hdf5_filename=hdf5_filename,
@@ -522,3 +522,11 @@ def detect_for_motion(
         featurization_cfg=featurization_cfg,
         show_progress=show_progress,
     )
+
+    del shaver
+    cleanup_and_log_gpu_usage(computation_cfg, f"Post shave ({hdf5_filename}):")
+
+    assert shave_path is not None
+    sorting = DARTsortSorting.from_peeling_hdf5(shave_path)
+
+    return sorting

@@ -108,8 +108,7 @@ def pc_merge(
     assert labels is not None
     labels = np.atleast_1d(labels)
     k = ids.max() + 1
-    ul = np.unique(labels)
-    ul = ul[ul >= 0]
+    ul, _, _ = data_util.pos_int_unique_and_counts(labels)
     assert np.array_equal(ul, np.unique(ids))
     assert ul.shape == (k,)
     assert k == ul.max() + 1
@@ -432,7 +431,6 @@ def gmm_isolation_scores(
         initializer=_iso_init,
         initargs=(ctx,),
     ) as pool:
-        unit_ids = unit_ids
         isolation = np.full(unit_ids.size, np.nan)
         domain = None
         kdes = None
@@ -482,7 +480,6 @@ class _GMMIsolationContext:
 
 
 def _iso_init(ctx):
-    global _iso_ctx
     _iso_ctx.ctx = ctx
 
 

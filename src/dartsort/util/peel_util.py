@@ -5,6 +5,7 @@ import numpy as np
 import torch
 
 from dartsort.util.multiprocessing_util import handle_negative_jobs
+from dartsort.util.torch_util import cleanup_and_log_gpu_usage
 
 from ..localize.localize_util import check_resume_or_overwrite, localize_hdf5
 from ..peel.peel_base import BasePeeler
@@ -35,8 +36,7 @@ def run_peeler(
     ensure_coverage: float | None = None,
     shuffle: bool = False,
     localization_dataset_name="point_source_localizations",
-    load_simple_features: bool = True,
-):
+) -> Path | None:
     output_directory = ensure_path(output_directory)
     output_directory.mkdir(exist_ok=True)
     model_dir = output_directory / model_subdir
@@ -50,6 +50,7 @@ def run_peeler(
         and not featurization_cfg.nn_localization
     )
     computation_cfg = ensure_computation_config(computation_cfg)
+    peel_name = peeler.__class__.__name__
 
     is_subsampling = stop_after_n_spikes is not None
     is_subsampling = is_subsampling and ensure_coverage != 1.0
@@ -75,20 +76,18 @@ def run_peeler(
         shuffle=is_subsampling or shuffle,
         n_residual_snips=n_resid_snips,
     ):
-        return DARTsortSorting.from_peeling_hdf5(
-            output_hdf5_filename, load_simple_features=load_simple_features
-        )
+        return output_hdf5_filename
 
     # ensure torch linalg inits before launching threads...
     _ensure_torch_linalg(computation_cfg)
 
     # fit models if needed
-    with timer(f"model fits ({peeler.__class__.__name__})"):
+    with timer(f"model fits ({peel_name})"):
         peeler.load_or_fit_and_save_models(
             model_dir, overwrite=overwrite, computation_cfg=computation_cfg
         )
         if fit_only:
-            return
+            return None
 
     # run main
     if peeler.featurization_pipeline is not None:
@@ -98,17 +97,16 @@ def run_peeler(
 
     if hasattr(peeler, "subtraction_denoising_pipeline"):
         logger.dartsortverbose(
-            f"Run {peeler.__class__.__name__} with denoising pipeline %s "
-            "and feature pipeline %s",
+            f"Run {peel_name} with denoising pipeline %s and feature pipeline %s",
             peeler.subtraction_denoising_pipeline,
             peeler.featurization_pipeline,
         )
     else:
         logger.dartsortverbose(
-            f"Run {peeler.__class__.__name__} with feature pipeline %s",
+            f"Run {peel_name} with feature pipeline %s",
             peeler.featurization_pipeline,
         )
-    with timer(f"peel ({peeler.__class__.__name__})"):
+    with timer(f"peel ({peel_name})"):
         peeler.peel(
             output_hdf5_filename,
             chunk_starts_samples=chunk_starts_samples,
@@ -122,7 +120,7 @@ def run_peeler(
             shuffle=is_subsampling or shuffle,
         )
     if n_resid_now == 0 and n_resid_snips > 0:
-        with timer(f"residuals ({peeler.__class__.__name__})"):
+        with timer(f"residuals ({peel_name})"):
             peeler.run_subsampled_peeling(
                 output_hdf5_filename,
                 chunk_length_samples=peeler.spike_length_samples,
@@ -152,9 +150,7 @@ def run_peeler(
             localization_model=featurization_cfg.localization_model,
         )
 
-    return DARTsortSorting.from_peeling_hdf5(
-        output_hdf5_filename, load_simple_features=load_simple_features
-    )
+    return output_hdf5_filename
 
 
 def peeler_is_done(

@@ -153,7 +153,7 @@ class DARTsortAnalysis:
         elif has_hdf5 and model_dir is not None:
             template_npz = model_dir / "template_data.npz"
             can_reload = sorting.has_persistent_labels()
-            if can_reload and sorting._has_dataset("template_inds"):
+            if can_reload and sorting.has_dataset("template_inds"):
                 assert sorting.labels is not None
                 can_reload = np.array_equal(sorting.labels, sorting.template_inds)
             if can_reload and template_npz.exists():
@@ -376,7 +376,7 @@ class DARTsortAnalysis:
         return self.x is not None
 
     def has_pca(self):
-        return self.sorting._has_dataset(self.tpca_features_dset)
+        return self.sorting.has_dataset(self.tpca_features_dset)
 
     def summary_df(self):
         if hasattr(self, "_summary_df"):

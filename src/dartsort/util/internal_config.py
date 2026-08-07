@@ -245,6 +245,8 @@ default_clustering_fit_sampling_cfg = FitSamplingConfig(
 class ClusteringFeaturesConfig:
     """Parameters to control which features are used for initial clustering"""
 
+    skip: bool = False
+
     # simple matrix feature controls
     use_x: bool = True
     use_z: bool = True
@@ -260,6 +262,7 @@ class ClusteringFeaturesConfig:
     pc_transform: Literal["log", "sqrt", "none"] | None = "none"
     pc_pre_transform_scale: float = 0.5
     adaptive_feature_scales: bool = False
+    need_xyza: bool = False
 
     # stable feature controls
     feature_rank: int = 8
@@ -586,8 +589,8 @@ class RefinementConfig:
     collision_cleaning_error_threshold: float | None = 0.3
 
     # deduplication control
-    dedup_ms: float = 0.3
-    censor_ms: float = 0.3
+    dedup_ms: float = 0.25
+    censor_ms: float = 0.25
 
 
 @cfg_dataclass
@@ -917,7 +920,6 @@ default_agglomerate_cfg = RefinementConfig(
     template_merge_cfg=TemplateMergeConfig(
         merge_distance_threshold=0.6, linkage="single"
     ),
-    dedup_ms=0.5,
     spikeinterface_merge_preset="none",
 )
 default_post_refinement_cfg = RefinementConfig(refinement_strategy="filter")
@@ -962,7 +964,9 @@ class DARTsortInternalConfig:
 
     # development / debugging flags
     work_in_tmpdir: bool = False
-    copy_recording_to_tmpdir: Literal["yes", "no", "if_preprocessing"] = "if_preprocessing"
+    copy_recording_to_tmpdir: Literal["yes", "no", "if_preprocessing"] = (
+        "if_preprocessing"
+    )
     workdir_follow_symlinks: bool = False
     workdir_copier: Literal["shutil", "rsync"] = "shutil"
     tmpdir_parent: str | None = None
