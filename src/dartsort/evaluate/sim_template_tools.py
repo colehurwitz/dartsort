@@ -129,10 +129,10 @@ class StaticTemplateSimulator(BaseTemplateSimulator):
         self.templates_up = upsample_multichan(
             self.template_data.templates, temporal_jitter=temporal_jitter
         )
-        _, mct, a0 = get_main_channels_and_alignments(template_data)
+        _, _mct, a0 = get_main_channels_and_alignments(template_data)
         self.offsets = a0 - template_data.trough_offset_samples
         assert self.templates_up.shape[:2] == (self.n_units, temporal_jitter)
-        _, mct, a1 = get_main_channels_and_alignments(
+        _, _mct, a1 = get_main_channels_and_alignments(
             templates=self.templates_up.reshape(
                 self.n_units * temporal_jitter, *self.templates_up.shape[2:]
             )
@@ -567,7 +567,7 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
             panic(self.interp_method)
 
         # temporal part...
-        n, r, c = spatial_singular.shape
+        n, r, _c = spatial_singular.shape
         if up:
             temporal = self.temporal_up[unit_ids].reshape(n, -1, r)
         else:
@@ -777,7 +777,7 @@ def _simulate_point_source_templates(
         dtype=dtype,
     )
     if temporal_jitter_kind == "exact":
-        t, sct_up = simulate_singlechan(
+        _t, sct_up = simulate_singlechan(
             size=n_units,
             time_domain=time_domain,
             time_domain_up=time_domain_up,
@@ -792,7 +792,7 @@ def _simulate_point_source_templates(
         sct_up = sct_up.transpose(0, 2, 1, 3)
         sct = sct_up[:, 0]
     else:
-        t, sct = simulate_singlechan(
+        _t, sct = simulate_singlechan(
             size=n_units,
             time_domain=time_domain,
             time_domain_up=time_domain_up,

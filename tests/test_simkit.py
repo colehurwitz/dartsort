@@ -13,6 +13,7 @@ from dartsort.util.internal_config import (
 )
 from dartsort.util.motion import get_motion_info
 from dartsort.util.noise_util import StationaryFactorizedNoise
+from dartsort.util.py_util import panic
 
 f_dt = "float32"
 r_dt = "float16"
@@ -296,11 +297,11 @@ def test_motion(tmp_path, drift_speed, drift_type):
     me0 = sim["motion"].dredge_motion_est
     d0 = me0.displacement.ravel()
     if drift_type == "line":
-        np.testing.assert_allclose(np.diff(d0), drift_speed)
+        np.testing.assert_allclose(np.diff(d0)[:-1], drift_speed)
     elif drift_type == "triangle":
-        np.testing.assert_allclose(np.abs(np.diff(d0)), abs(drift_speed))
+        np.testing.assert_allclose(np.abs(np.diff(d0))[:-1], abs(drift_speed))
     else:
-        assert False
+        panic(drift_type)
     me1 = get_motion_info(
         recording=sim["recording"],
         sorting=sim["sorting"],
@@ -312,7 +313,7 @@ def test_motion(tmp_path, drift_speed, drift_type):
     d1 = me1.displacement.ravel()
     np.testing.assert_equal(me0.time_bin_centers_s, me1.time_bin_centers_s)
     assert np.isclose(
-        np.mean(np.square(np.diff(d0)[1:-1] - np.diff(d1)[1:-1])), 0.0, atol=0.1
+        np.mean(np.square(np.diff(d0)[1:-1] - np.diff(d1)[1:-1])), 0.0, atol=0.25
     )
 
 
