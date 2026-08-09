@@ -591,18 +591,28 @@ class ViolationCounts:
     """Indexed by pair of ids (not flat)"""
 
 
-def violation_matrix(st: DARTsortSorting, *, viol_ms: float = 1.0) -> ViolationCounts:
-    """Count ACG and CCG violations within viol_ms"""
+def violation_matrix(
+    st: DARTsortSorting, *, censor_ms: float = 0.25, viol_ms: float = 1.0
+) -> ViolationCounts:
+    """Count ACG and CCG violations within viol_ms
+
+    Times within censor_ms of each other are ignored in the violation
+    count. The censorship is right-exclusive, so that if censor_ms is 0,
+    exact duplicates are counted; if censor_ms corresponds to 10 samples,
+    9-sample viols are excluded and 10-sample viols are counted.
+    """
     assert st.labels is not None
+    censor_samples = int(censor_ms * (st.sampling_frequency / 1000.0))
     viol_samples = int(viol_ms * (st.sampling_frequency / 1000.0))
 
     unit_ids, spike_counts, _ = pos_int_unique_and_counts(st.labels)
     nu = (unit_ids.max() + 1).item() if unit_ids.size else 0
-    if not nu:
+    if not nu or (viol_samples < max(0, censor_samples)):
+        # nothing can be counted, but keep the matrix shape consistent
         return ViolationCounts(
             unit_ids=unit_ids,
             spike_counts=spike_counts,
-            viol_counts=np.zeros((0, 0), dtype=np.int64),
+            viol_counts=np.zeros((nu, nu), dtype=np.int64),
         )
 
     labels = st.labels
@@ -619,7 +629,9 @@ def violation_matrix(st: DARTsortSorting, *, viol_ms: float = 1.0) -> ViolationC
     starts = (np.arange(nchunks + 1) * n) // nchunks
     viol_counts = np.zeros((nchunks, nu, nu), dtype=np.int64)
 
-    _violation_count_matrix(times, labels, viol_samples, starts, viol_counts)
+    _violation_count_matrix(
+        times, labels, censor_samples, viol_samples, starts, viol_counts
+    )
 
     viol_counts = viol_counts.sum(axis=0)
     viol_diag = np.diagonal(viol_counts).copy()
@@ -637,6 +649,7 @@ def violation_matrix(st: DARTsortSorting, *, viol_ms: float = 1.0) -> ViolationC
 def _violation_count_matrix(
     times: np.ndarray,
     labels: np.ndarray,
+    censor_samples: int,
     viol_samples: int,
     starts: np.ndarray,
     counts: np.ndarray,
@@ -653,10 +666,13 @@ def _violation_count_matrix(
                 continue
 
             ti = times[i]
+            first = ti + censor_samples
             last = ti + viol_samples
 
             # make sure to read js past the chunk end!
             for j in range(i + 1, n):
+                if times[j] < first:
+                    continue
                 if times[j] > last:  # be inclusive here i suppose
                     break
                 lj = labels[j]
