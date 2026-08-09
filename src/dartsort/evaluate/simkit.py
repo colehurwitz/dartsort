@@ -254,13 +254,13 @@ def make_simulated_recording(
     fs = recording.sampling_frequency
     n_samples = recording.get_num_frames()
     n_units = template_simulator.n_units
+    extra = {}
 
     # firing rates, and the latent state which drives them
     rg = np.random.default_rng(random_seed)
     n_bins = int(np.ceil(n_samples / fs))
     if firing_kind == "uniform":
         firing_rates = rg.uniform(min_fr_hz, max_fr_hz, size=n_units)
-        states = np.zeros(n_bins, dtype=np.int32)
     elif firing_kind == "switching_two_state":
         states, firing_rates = simulate_twostate_switching(
             rg=rg,
@@ -272,6 +272,7 @@ def make_simulated_recording(
             up_min_fr=up_min_fr_hz,
             max_fr=max_fr_hz,
         )
+        extra["states"] = states
     else:
         raise ValueError(f"Unknown {firing_kind=}")
 
@@ -299,7 +300,6 @@ def make_simulated_recording(
         sorting=sorting,
         motion=motion,
         template_simulator=template_simulator,
-        states=states,
         amplitude_jitter=amplitude_jitter,
         amp_jitter_family=amp_jitter_family,
         temporal_jitter=temporal_jitter,
@@ -308,6 +308,7 @@ def make_simulated_recording(
         random_seed=random_seed,
         features_dtype=features_dtype,
         compute_collision_waveforms=compute_collision_waveforms,
+        extra_data_to_save=extra,
     )
 
 

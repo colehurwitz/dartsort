@@ -27,8 +27,8 @@ try:
 except ImportError:
     try:
         from importlib_resources import files  # type: ignore # ty: ignore[x]
-    except ImportError:
-        raise ValueError("Need python>=3.10 or pip install importlib_resources.")
+    except ImportError as e:
+        raise ValueError("Need python>=3.10 or pip install importlib_resources.") from e
 
 from ..templates import TemplateData
 from ..transform import WaveformPipeline
@@ -416,20 +416,20 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         sorting: BaseSorting,
         motion: MotionInfo,
         template_simulator: "TemplateSimulator",
-        states: np.ndarray | None = None,
         amplitude_jitter: float = 0.0,
-        amp_jitter_family: Literal["gamma", "uniform"] = "uniform",
+        amp_jitter_family: Literal["gamma", "uniform", "normal"] = "normal",
         temporal_jitter: int = 1,
         temporal_jitter_family: Literal["uniform", "by_unit"] = "uniform",
         extract_radius: float = 100.0,
-        random_seed: int = 0,
+        random_seed: np.random.Generator | int = 0,
         features_dtype="float32",
         compute_collision_waveforms=False,
+        extra_data_to_save: dict[str, np.ndarray] | None = None,
     ):
         super().__init__(recording)
         assert len(recording._recording_segments) == 1
         assert sorting.get_num_segments() == 1
-        #TODO
+        # TODO
         assert not motion.is_nonrigid
 
         self._serializability["json"] = False
@@ -448,6 +448,7 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         self.random_seed = random_seed
         self.compute_collision_waveforms = compute_collision_waveforms
         self.fs = self.sampling_frequency
+        self.extra_data_to_save = extra_data_to_save
 
         # shapes
         self.n_units = template_simulator.n_units
@@ -468,10 +469,6 @@ class InjectSpikesPreprocessor(BasePreprocessor):
             template_simulator.geom, extract_radius
         )
         self.wf_shape = (self.spike_length_samples, self.n_channels)
-        self.inj_wf_shape = (
-            self.spike_length_samples,
-            self.extract_channel_index.shape[1],
-        )
         self.template_shape = (self.n_units, *self.wf_shape)
         self.template_shape_up = (self.n_units, temporal_jitter, *self.wf_shape)
 
@@ -483,12 +480,6 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         self.n_spikes = sorting.count_total_num_spikes()
         assert self.times_samples.shape == self.labels.shape == (self.n_spikes,)
 
-        n_bins = int(np.ceil(self.get_num_frames() / self.fs))
-        if states is None:
-            states = np.zeros(n_bins, dtype=np.int32)
-        assert states.shape == (n_bins,)
-        self.states = states
-
         # bake all random stuff
         rg = np.random.default_rng(random_seed)
         if amplitude_jitter and amp_jitter_family == "gamma":
@@ -499,6 +490,12 @@ class InjectSpikesPreprocessor(BasePreprocessor):
             self.scalings = rg.uniform(
                 1.0 - amplitude_jitter, 1.0 + amplitude_jitter, size=self.n_spikes
             )
+        elif amplitude_jitter and amp_jitter_family == "normal":
+            self.scalings = rg.normal(
+                loc=1.0, scale=amplitude_jitter, size=self.n_spikes
+            )
+            # make sure things are positive...
+            np.maximum(self.scalings, 0.0, out=self.scalings)
         else:
             assert not amplitude_jitter
             self.scalings = np.ones(1, dtype=features_dtype)
@@ -616,6 +613,7 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         in_chunk_only=True,
         extract=False,
         n_residual_snips=0,
+        get_injected=True,
     ):
         if in_chunk_only:
             search_start = start_frame
@@ -689,14 +687,14 @@ class InjectSpikesPreprocessor(BasePreprocessor):
             echans = echans.numpy(force=True)
         noise_waveforms = noise_padded[tix[:, :, None], echans[:, None, :]]
         # the actual injected waveforms...
-        injected_waveforms = np.take_along_axis(temps, echans[:, None, :], axis=2)
-        collisioncleaned_waveforms = noise_waveforms + injected_waveforms
-
-        spikes["noise_waveforms"] = noise_waveforms
-        spikes["injected_waveforms"] = injected_waveforms
-        spikes["collisioncleaned_waveforms"] = collisioncleaned_waveforms
-        spikes["collidedness"] = np.ones(
-            len(collisioncleaned_waveforms), dtype=collisioncleaned_waveforms.dtype
+        if get_injected:
+            injected_waveforms = np.take_along_axis(temps, echans[:, None, :], axis=2)
+            collisioncleaned_waveforms = noise_waveforms + injected_waveforms
+            spikes["noise_waveforms"] = noise_waveforms
+            spikes["injected_waveforms"] = injected_waveforms
+            spikes["collisioncleaned_waveforms"] = collisioncleaned_waveforms
+        spikes["collidedness"] = np.sqrt(
+            np.nanmean(np.square(noise_waveforms).mean(1), 1)
         )
         spikes["echans"] = echans
 
@@ -711,6 +709,7 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         extract=False,
         inject=False,
         n_residual_snips=0,
+        get_injected=False,
     ):
         traces, lm, rm = get_chunk_with_margin(
             self.parent_segment,
@@ -730,6 +729,7 @@ class InjectSpikesPreprocessor(BasePreprocessor):
             in_chunk_only=not inject,
             extract=extract,
             n_residual_snips=n_residual_snips,
+            get_injected=get_injected,
         )
 
         if not inject and not self.compute_collision_waveforms:
@@ -775,6 +775,7 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         save_injected_waveforms=False,
         save_noise_waveforms=False,
         save_collision_waveforms=False,
+        save_collisioncleaned_waveforms=True,
         save_collidedness=False,
         chunk_len_s=0.5,
     ):
@@ -783,6 +784,12 @@ class InjectSpikesPreprocessor(BasePreprocessor):
                 hdf5_path.unlink()
         else:
             assert not hdf5_path.exists()
+
+        get_injected = (
+            save_injected_waveforms
+            or save_collision_waveforms
+            or save_collisioncleaned_waveforms
+        )
 
         n_jobs, Executor, context = get_pool(n_jobs, cls="ThreadPoolExecutor")
         with Executor(max_workers=n_jobs, mp_context=context) as pool:
@@ -794,7 +801,10 @@ class InjectSpikesPreprocessor(BasePreprocessor):
                 n_residual_snips, len(chunk_starts), self.random_seed
             )
             jobs = (
-                ((t, min(t + bs, nt)), dict(extract=True, n_residual_snips=nrs))
+                (
+                    (t, min(t + bs, nt)),
+                    dict(extract=True, n_residual_snips=nrs, get_injected=get_injected),
+                )
                 for t, nrs in zip(chunk_starts, residual_snips_per_chunk, strict=True)
             )
             with h5py.File(hdf5_path, "w", locking=False) as h5:
@@ -810,7 +820,6 @@ class InjectSpikesPreprocessor(BasePreprocessor):
                     "times_seconds",
                     data=self.sample_index_to_time(times_samples),
                 )
-                h5.create_dataset("states", data=self.states)
                 h5.create_dataset("labels", data=self.labels)
                 h5.create_dataset("scalings", data=self.scalings)
                 h5.create_dataset("jitter_ix", data=self.jitter_ix)
@@ -818,18 +827,24 @@ class InjectSpikesPreprocessor(BasePreprocessor):
                 h5.create_dataset("unit_positions", data=pos)
                 h5.create_dataset("up_offsets", data=off)
                 h5.create_dataset("templates_up", data=temp)
+                for k, v in (self.extra_data_to_save or {}).items():
+                    h5.create_dataset(k, data=v)
 
                 # arrays discovered in batches below
                 f_dt = self.features_dtype
-                inj_wf_shape = self.inj_wf_shape
+                inj_wf_shape = (
+                    self.spike_length_samples,
+                    self.extract_channel_index.shape[1],
+                )
                 dataset_shapes = {
                     "localizations": ((3,), f_dt),
                     "displacements": ((), f_dt),
                     "ptp_amplitudes": ((), f_dt),
                     "channels": ((), np.int32),
-                    "collisioncleaned_waveforms": (inj_wf_shape, f_dt),
                     "time_shifts": ((), np.int16),
                 }
+                if save_collisioncleaned_waveforms:
+                    dataset_shapes["collisioncleaned_waveforms"] = (inj_wf_shape, f_dt)
                 if save_injected_waveforms:
                     dataset_shapes["injected_waveforms"] = (inj_wf_shape, f_dt)
                 if save_noise_waveforms:
@@ -928,6 +943,7 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         save_injected_waveforms=False,
         save_noise_waveforms=False,
         save_collision_waveforms=False,
+        save_collisioncleaned_waveforms=True,
         save_collidedness=False,
         chunk_len_s=0.5,
     ):
@@ -971,6 +987,7 @@ class InjectSpikesPreprocessor(BasePreprocessor):
             save_injected_waveforms=save_injected_waveforms,
             save_noise_waveforms=save_noise_waveforms,
             save_collision_waveforms=save_collision_waveforms,
+            save_collisioncleaned_waveforms=save_collisioncleaned_waveforms,
             save_collidedness=save_collidedness,
             chunk_len_s=chunk_len_s,
         )
