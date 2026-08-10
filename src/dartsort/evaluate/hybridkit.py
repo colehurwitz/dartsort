@@ -77,6 +77,8 @@ def make_hybrid_recording(
     amp_jitter_family: Literal["gamma", "uniform", "normal"] = "normal",
     temporal_jitter: int = 8,
     save_chunk_len_s: float = 0.5,
+    template_simulator_kwargs: dict | None = None,
+    metadata: dict[str, Any] | None = None,
     computation_cfg=None,
     rg: np.random.Generator | int = 0,
 ) -> HybridDataset:
@@ -100,11 +102,11 @@ def make_hybrid_recording(
         injected_sorting = injected_sorting.frame_slice(frame_start, frame_end)
 
     if reset_times:
-        target_recording = target_recording.reset_times()
+        target_recording.reset_times()
         if abs(target_recording.sampling_frequency - target_sampling_frequency) > 10.0:
             raise ValueError("Sampling...")
         target_recording._sampling_frequency = target_sampling_frequency
-        target_recording = target_recording.reset_times()
+        target_recording.reset_times()
 
     if template_peak_range is not None:
         templates = rescale_templates(templates, template_peak_range, rg)
@@ -119,13 +121,22 @@ def make_hybrid_recording(
         target_recording = target_recording.remove_channels(bcids[0])
     target_recording = spre.scale_to_uV(target_recording)  # ty: ignore[invalid-argument-type]
 
+    template_simulator_kwargs = dict(template_simulator_kwargs or {})
+    template_simulator_kwargs.setdefault("trough_offset_samples", templates.nbefore)
+    if templates.probe is not None:
+        # the library's own geometry is where its templates were sampled
+        template_simulator_kwargs.setdefault(
+            "source_geom", templates.get_channel_locations()
+        )
     template_simulator = get_template_simulator(
         n_units=templates.num_units,
         templates_kind="library",
         template_library=templates.templates_array,
+        geom=target_recording.get_channel_locations(),
         sampling_frequency=target_sampling_frequency,
         temporal_jitter=temporal_jitter,
         random_seed=rg,
+        **template_simulator_kwargs,
     )
     hybrid_recording = InjectSpikesPreprocessor(
         recording=target_recording,
@@ -151,9 +162,25 @@ def make_hybrid_recording(
         save_noise_waveforms=False,
         save_collision_waveforms=False,
         save_collisioncleaned_waveforms=False,
-        save_collidedness=True,
+        save_collidedness=False,
         n_residual_snips=0,
     )
+    metadata = dict(metadata or {})
+    metadata.update(
+        filter=filter,
+        trim_t_start_rel=trim_t_start_rel,
+        trim_t_len=trim_t_len,
+        remove_bad_channels=remove_bad_channels,
+        template_peak_range=template_peak_range,
+        reset_times=reset_times,
+        target_sampling_frequency=target_sampling_frequency,
+        amplitude_jitter=amplitude_jitter,
+        amp_jitter_family=amp_jitter_family,
+        temporal_jitter=temporal_jitter,
+    )
+    with (ensure_path(folder) / "metadata.json").open("w") as jsonf:
+        json.dump(metadata, jsonf)
+
     res = load_hybrid_recording(folder)
     assert res is not None
     return res

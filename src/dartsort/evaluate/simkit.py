@@ -74,7 +74,7 @@ def generate_simulation(
     save_injected_waveforms=False,
     save_noise_waveforms=False,
     save_collision_waveforms=False,
-    save_collisioncleaned_waveforms=False,
+    save_collisioncleaned_waveforms=True,
     save_collidedness=False,
     n_residual_snips=4096,
     # control

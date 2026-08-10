@@ -1,0 +1,257 @@
+import numpy as np
+import probeinterface
+import pytest
+import spikeinterface.core as sc
+
+from dartsort.evaluate import hybridkit, sim_template_tools, simkit, simlib
+from dartsort.evaluate.noise_recording_tools import get_background_recording
+from dartsort.util.internal_config import ComputationConfig
+from dartsort.util.motion import MotionInfo
+
+fs = 30_000.0
+duration_s = 2.0
+n_units = 5
+chunk_len_s = 0.5
+source_pitch = 5.0
+source_margin_um = 30.0
+
+drift_period_s = 4.0
+drift_params = {"y": dict(drift_speed=10.0), "n": dict(drift_speed=0.0)}
+max_drift_um = (
+    max(d["drift_speed"] for d in drift_params.values()) * drift_period_s / 4.0
+)
+
+
+def probe_from_geom(geom):
+    probe = probeinterface.Probe(ndim=2)
+    probe.set_contacts(positions=geom)
+    probe.set_device_channel_indices(np.arange(len(geom)))
+    return probe
+
+
+def dense_grid_geom(target_geom, pitch=source_pitch, margin=source_margin_um):
+    x_center = (target_geom[:, 0].min() + target_geom[:, 0].max()) / 2.0
+    x_half = np.ptp(target_geom[:, 0]) / 2.0 + margin
+    nx = int(np.ceil(x_half / pitch))
+    xs = x_center + pitch * np.arange(-nx, nx + 1)
+
+    z_low = target_geom[:, 1].min() - margin
+    z_high = target_geom[:, 1].max() + margin
+    nz = int(np.ceil((z_high - z_low) / pitch))
+    zs = z_low + pitch * np.arange(nz + 1)
+
+    x_grid, z_grid = np.meshgrid(xs, zs)
+    return np.c_[x_grid.ravel(), z_grid.ravel()]
+
+
+@pytest.fixture(scope="module")
+def target_geom():
+    """A shortened NP1-like probe."""
+    return simlib.generate_geom(
+        num_columns=2, num_contact_per_column=12, y_shift_per_column="flat"
+    )
+
+
+def point_source_library(simulator, geom):
+    """Evaluate simulator's PS3exp templates on the other geom geom"""
+    geom3 = np.zeros((len(geom), 3), dtype=simulator.dtype)
+    geom3[:, [0, 2]] = geom
+    return sim_template_tools.singlechan_to_probe(
+        simulator.template_pos,
+        simulator.template_alpha,
+        simulator.singlechan_templates,
+        geom3,
+        decay_model=simulator.decay_model,
+    )
+
+
+def zeros_recording(geom, num_samples):
+    recording = get_background_recording(
+        None,
+        duration_samples=num_samples,
+        geom=geom,
+        noise_kind="zero",
+        sampling_frequency=fs,
+        dtype="float32",
+    )
+    recording.set_channel_gains(1.0)
+    recording.set_channel_offsets(0.0)
+    return recording
+
+
+@pytest.mark.parametrize("drift", list(drift_params))
+def test_hybrid_matches_sim(tmp_path, target_geom, drift):
+    """Sim ~= hybrid with zeros background, dense grid hybrid geom."""
+    drift_speed = drift_params[drift]["drift_speed"]
+    computation_cfg = ComputationConfig.from_n_jobs(1)
+
+    simulator = sim_template_tools.get_template_simulator(
+        n_units=n_units,
+        templates_kind="3exp",
+        geom=target_geom,
+        sampling_frequency=fs,
+        common_reference=False,
+        temporal_jitter=1,
+        random_seed=0,
+        min_rms_distance=1.0,
+    )
+    sim = simkit.generate_simulation(
+        tmp_path / "sim",
+        tmp_path / "noise",
+        n_units=n_units,
+        duration_seconds=duration_s,
+        geom=target_geom,
+        sampling_frequency=fs,
+        template_simulator=simulator,
+        noise_kind="white",
+        white_noise_scale=0.0,
+        recording_dtype="float32",
+        amplitude_jitter=0.0,
+        temporal_jitter=1,
+        min_fr_hz=20.0,
+        max_fr_hz=25.0,
+        drift_type="triangle",
+        drift_speed=drift_speed,
+        drift_period=drift_period_s,
+        max_chunk_len_s=chunk_len_s,
+        max_drift_per_chunk=np.inf,
+        featurization_cfg=None,
+        computation_cfg=computation_cfg,
+    )
+    assert isinstance(sim, dict)
+    gt_sorting = sim["sorting"]
+    num_samples = sim["recording"].get_num_frames()
+
+    source_geom = dense_grid_geom(target_geom)
+    library = point_source_library(simulator, source_geom)
+    main_channels = np.abs(library).max(1).argmax(1)
+    si_templates = sc.Templates(
+        templates_array=library,
+        sampling_frequency=fs,
+        nbefore=simulator.trough_offset_samples(),
+        is_in_uV=True,
+        probe=probe_from_geom(source_geom),
+    )
+
+    assert np.array_equal(np.unique(gt_sorting.labels), np.arange(n_units))
+    injected_sorting = sc.NumpySorting.from_samples_and_labels(
+        [gt_sorting.times_samples], [gt_sorting.labels], sampling_frequency=fs
+    )
+
+    hybrid = hybridkit.make_hybrid_recording(
+        folder=tmp_path / "hybrid",
+        target_recording=zeros_recording(target_geom, num_samples),
+        injected_sorting=injected_sorting,
+        motion=sim["motion"],
+        templates=si_templates,
+        filter=False,
+        remove_bad_channels=False,
+        template_peak_range=None,
+        amplitude_jitter=0.0,
+        temporal_jitter=1,
+        target_sampling_frequency=fs,
+        save_chunk_len_s=chunk_len_s,
+        template_simulator_kwargs=dict(
+            interp_method="grid_sample",
+            extract_radius=10 * np.ptp(source_geom[:, 1]),
+            depths=source_geom[main_channels, 1],
+        ),
+        computation_cfg=computation_cfg,
+    )
+
+    np.testing.assert_array_equal(
+        hybrid.gt_sorting.times_samples, gt_sorting.times_samples
+    )
+    np.testing.assert_array_equal(hybrid.gt_sorting.labels, gt_sorting.labels)
+
+    sim_templates = sim["templates"].templates
+    scale = np.abs(sim_templates).max()
+    assert scale > 1.0
+    np.testing.assert_allclose(
+        hybrid.gt_templates.templates, sim_templates, atol=0.01 * scale
+    )
+    np.testing.assert_array_equal(
+        hybrid.gt_templates.registered_geom, sim["templates"].registered_geom
+    )
+
+    sim_traces = sim["recording"].get_traces()
+    hybrid_traces = hybrid.recording.get_traces()
+    assert hybrid_traces.shape == sim_traces.shape
+    trace_scale = np.abs(sim_traces).max()
+    assert trace_scale > 1.0
+    rms_error = np.sqrt(np.mean(np.square(hybrid_traces - sim_traces)))
+    assert rms_error < 0.005 * np.sqrt(np.mean(np.square(sim_traces)))
+    np.testing.assert_allclose(hybrid_traces, sim_traces, atol=0.01 * trace_scale)
+
+    sim_units = sim["unit_info_df"]
+    hybrid_units = hybrid.gt_unit_info
+    assert np.abs(hybrid_units.x - sim_units.x).max() < source_pitch
+    assert np.abs(hybrid_units.z - sim_units.z).max() < source_pitch
+
+
+@pytest.mark.parametrize("trough_shift", [0, -3, 5])
+def test_misaligned_library(tmp_path, target_geom, trough_shift):
+    computation_cfg = ComputationConfig.from_n_jobs(1)
+    simulator = sim_template_tools.get_template_simulator(
+        n_units=n_units,
+        templates_kind="3exp",
+        geom=target_geom,
+        sampling_frequency=fs,
+        common_reference=False,
+        temporal_jitter=1,
+        random_seed=0,
+        min_rms_distance=1.0,
+    )
+    nbefore = simulator.trough_offset_samples()
+    library = np.roll(simulator.templates()[1], trough_shift, axis=1)
+    si_templates = sc.Templates(
+        templates_array=library,
+        sampling_frequency=fs,
+        nbefore=nbefore,
+        is_in_uV=True,
+        probe=probe_from_geom(target_geom),
+    )
+
+    spike_length = simulator.spike_length_samples()
+    refrac = 4 * spike_length
+    num_samples = int(duration_s * fs)
+    times = np.arange(spike_length, num_samples - refrac, refrac)
+    labels = np.arange(times.size) % n_units
+    injected_sorting = sc.NumpySorting.from_samples_and_labels(
+        [times], [labels], sampling_frequency=fs
+    )
+
+    hybrid = hybridkit.make_hybrid_recording(
+        folder=tmp_path / "hybrid",
+        target_recording=zeros_recording(target_geom, num_samples),
+        injected_sorting=injected_sorting,
+        motion=MotionInfo.static(target_geom),
+        templates=si_templates,
+        filter=False,
+        remove_bad_channels=False,
+        template_peak_range=None,
+        amplitude_jitter=0.0,
+        temporal_jitter=1,
+        target_sampling_frequency=fs,
+        save_chunk_len_s=chunk_len_s,
+        template_simulator_kwargs=dict(
+            interp_method="dart", extract_radius=10 * np.ptp(target_geom[:, 1])
+        ),
+        computation_cfg=computation_cfg,
+    )
+
+    # check sim times are shifted by the same shifts
+    np.testing.assert_array_equal(hybrid.gt_sorting.times_samples, times + trough_shift)
+
+    # check trace argminima
+    traces = hybrid.recording.get_traces()
+    half = spike_length // 2
+    for time in hybrid.gt_sorting.times_samples:
+        snippet = traces[time - half : time + half + 1]
+        trough_t, _ = np.unravel_index(snippet.argmin(), snippet.shape)
+        assert trough_t == half
+
+
+def test_drift_is_actually_tested_but_not_too_much():
+    assert max_drift_um >= 2 * source_pitch
+    assert max_drift_um + 2 * source_pitch <= source_margin_um

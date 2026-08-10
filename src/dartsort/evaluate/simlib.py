@@ -508,12 +508,9 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         else:
             self.jitter_ix = np.zeros(1, dtype=np.int64)
             self.jitter_ix = np.broadcast_to(self.jitter_ix, (self.n_spikes,))
-        if temporal_jitter == 1:
-            self.upsampling_offsets = np.zeros_like(self.times_samples)
-        else:
-            self.upsampling_offsets = template_simulator.offsets_up[
-                self.labels, self.jitter_ix
-            ]
+        self.upsampling_offsets = template_simulator.offsets_up[
+            self.labels, self.jitter_ix
+        ]
 
     # -- simulation info
 
@@ -686,6 +683,9 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         if torch.is_tensor(echans):
             echans = echans.numpy(force=True)
         noise_waveforms = noise_padded[tix[:, :, None], echans[:, None, :]]
+        spikes["collidedness"] = np.sqrt(
+            np.nanmean(np.square(noise_waveforms).mean(1), 1)
+        )
         # the actual injected waveforms...
         if get_injected:
             injected_waveforms = np.take_along_axis(temps, echans[:, None, :], axis=2)
@@ -693,9 +693,6 @@ class InjectSpikesPreprocessor(BasePreprocessor):
             spikes["noise_waveforms"] = noise_waveforms
             spikes["injected_waveforms"] = injected_waveforms
             spikes["collisioncleaned_waveforms"] = collisioncleaned_waveforms
-        spikes["collidedness"] = np.sqrt(
-            np.nanmean(np.square(noise_waveforms).mean(1), 1)
-        )
         spikes["echans"] = echans
 
         return spikes
