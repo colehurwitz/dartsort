@@ -951,6 +951,7 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         save_collision_waveforms=False,
         save_collisioncleaned_waveforms=True,
         save_collidedness=False,
+        extra_unit_information: pd.DataFrame | None = None,
         chunk_len_s=0.5,
     ):
         folder = ensure_path(folder)
@@ -959,6 +960,13 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         templates_npz = folder / "templates.npz"
         sorting_h5 = folder / "dartsort_sorting.h5"
         unit_info_csv = folder / "unit_information.csv"
+
+        # doing this up top to fail early
+        unit_df = self.gt_unit_information()
+        if extra_unit_information is not None:
+            assert extra_unit_information.index.name is None
+            assert len(unit_df) == len(extra_unit_information)
+            unit_df = pd.concat(unit_df, axis=1)
 
         if recording_dir.exists():
             try:
@@ -1002,7 +1010,7 @@ class InjectSpikesPreprocessor(BasePreprocessor):
             torch.manual_seed(self.random_seed)
             add_features(sorting_h5, recording, featurization_cfg, computation_cfg)
 
-        self.gt_unit_information().to_csv(unit_info_csv)
+        unit_df.to_csv(unit_info_csv)
         self.motion.save(folder)
         self.template_data(sorting_h5).to_npz(templates_npz)
 

@@ -80,6 +80,7 @@ def make_hybrid_recording(
     template_simulator_kwargs: dict | None = None,
     metadata: dict[str, Any] | None = None,
     computation_cfg=None,
+    extra_unit_information: pd.DataFrame | None = None,
     rg: np.random.Generator | int = 0,
 ) -> HybridDataset:
     assert templates.is_in_uV
@@ -163,6 +164,7 @@ def make_hybrid_recording(
         save_collision_waveforms=False,
         save_collisioncleaned_waveforms=False,
         save_collidedness=False,
+        extra_unit_information=extra_unit_information,
         n_residual_snips=0,
     )
     metadata = dict(metadata or {})
