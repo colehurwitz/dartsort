@@ -231,7 +231,8 @@ class MotionInfo:
         )
 
     @classmethod
-    def static(cls, geom: np.ndarray):
+    def static(cls, geom: np.ndarray) -> Self:
+        """Make an 'all-zero' MotionInfo."""
         return cls.from_motion_est(geom=geom, dredge_motion_est=None, si_motion=None)
 
     @property

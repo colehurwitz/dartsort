@@ -270,6 +270,7 @@ def _dartsort_impl(
                 recording=recording,
                 cfg=cfg,
                 overwrite=overwrite,
+                # note: usually motion=None here, except in certain benchmark comparisons
                 motion=motion,
                 load_simple_features=False,
             )
@@ -342,6 +343,7 @@ def _dartsort_impl(
     for step in range(next_step, cfg.matching_iterations + 1):
         is_final = step == cfg.matching_iterations
 
+        # next few lines say: please subsample if not the final step
         if step == 0:
             panic(step)
         elif step == 1:
@@ -595,7 +597,7 @@ def match(
     previous_detection_cfg: Any | None = None,
     prev_step_name: str | None = None,
     save_cfg: DARTsortInternalConfig | None = None,
-    chunk_starts_samples=None,
+    chunk_starts_samples = None,
     stop_after_n_spikes: int | None = None,
     ensure_coverage: float | None = None,
     overwrite=False,
