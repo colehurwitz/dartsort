@@ -71,6 +71,7 @@ def make_hybrid_recording(
     trim_t_len: float | None = None,
     remove_bad_channels: bool = True,
     template_peak_range: tuple[float, float] | None = (25.0, 100.0),
+    template_x_align: Literal["center", "amplitude"] = "center",
     reset_times: bool = True,
     target_sampling_frequency: float = 30_000.0,
     amplitude_jitter: float = 0.05,
@@ -124,6 +125,9 @@ def make_hybrid_recording(
 
     template_simulator_kwargs = dict(template_simulator_kwargs or {})
     template_simulator_kwargs.setdefault("trough_offset_samples", templates.nbefore)
+    # when the library's probe is narrower than the target's, "amplitude" puts
+    # each unit on the side of ptp com
+    template_simulator_kwargs.setdefault("x_align", template_x_align)
     if templates.probe is not None:
         # the library's own geometry is where its templates were sampled
         template_simulator_kwargs.setdefault(
@@ -174,6 +178,7 @@ def make_hybrid_recording(
         trim_t_len=trim_t_len,
         remove_bad_channels=remove_bad_channels,
         template_peak_range=template_peak_range,
+        template_x_align=template_simulator_kwargs["x_align"],
         reset_times=reset_times,
         target_sampling_frequency=target_sampling_frequency,
         amplitude_jitter=amplitude_jitter,

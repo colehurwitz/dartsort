@@ -351,6 +351,7 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
         geom: np.ndarray,
         templates_local: np.ndarray,
         pos_local: np.ndarray,
+        source_geom: np.ndarray | None = None,
         radius=250.0,
         temporal_jitter=1,
         common_reference=False,
@@ -396,8 +397,11 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
 
         if interp_method == "grid_sample":
             # grid sample only supports regular grids, asserting that...
-            xs = pos_local[..., 0]
-            n_cols = np.unique(xs[np.isfinite(xs)]).size
+            if source_geom is not None:
+                n_cols = np.unique(source_geom[:, 0]).size
+            else:
+                xs = pos_local[0, :, 0]
+                n_cols = np.unique(xs[np.isfinite(xs)]).size
             n_rows, rem = divmod(pos_local.shape[1], n_cols)
             assert not rem
             self.grid_shape = (n_rows, n_cols)
@@ -442,6 +446,7 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
         inject_radius=500.0,
         trough_offset_samples=42,
         pos_margin_um_z=25.0,
+        x_align: Literal["center", "amplitude"] = "center",
         seed=0,
         dtype="float32",
         interp_method: Literal["dart", "grid_sample"] = "dart",
@@ -511,18 +516,17 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
             assert same_probe
 
         if not same_probe:
-            # try to center them in x, but...
-            # TODO maybe per-unit?
-            source_x = source_geom[:, 0]
-            target_x = target_geom[:, 0]
-            source_center = (source_x.min() + source_x.max()) / 2.0
-            target_center = (target_x.min() + target_x.max()) / 2.0
-            pos_local[..., 0] += target_center - source_center
+            # place each unit's channels in the target's x range
+            shifts = x_alignment_shifts(
+                pos_local, templates_local, source_geom, target_geom, kind=x_align
+            )
+            pos_local[..., 0] += shifts[:, None]
 
         return cls(
             geom=target_geom,
             templates_local=templates_local,
             pos_local=pos_local,
+            source_geom=source_geom,
             temporal_jitter=temporal_jitter,
             common_reference=common_reference,
             trough_offset_samples=trough_offset_samples,
@@ -654,6 +658,42 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
             offsets = offsets.reshape(nu, up_factor)
 
         return true_template_pos, out, offsets
+
+
+def x_alignment_shifts(
+    pos_local: np.ndarray,
+    templates_local: np.ndarray,
+    source_geom: np.ndarray,
+    target_geom: np.ndarray,
+    kind: Literal["center", "amplitude"] = "center",
+) -> np.ndarray:
+    x = pos_local[..., 0]
+    target_x = target_geom[:, 0]
+
+    if kind == "center":
+        source_x = source_geom[:, 0]
+        source_center = (source_x.min() + source_x.max()) / 2.0
+        target_center = (target_x.min() + target_x.max()) / 2.0
+        return np.full(len(pos_local), target_center - source_center)
+
+    if kind != "amplitude":
+        panic(kind)
+
+    # nan channels are the padding ones, they hold no amplitude
+    valid = np.isfinite(x)
+    amps = np.nan_to_num(np.ptp(templates_local, axis=1))
+    amps = np.where(valid, amps, 0.0)
+    xv = np.where(valid, x, 0.0)
+    assert (amps.sum(1) > 0).all()
+    com = np.einsum("nc,nc->n", amps, xv) / amps.sum(1)
+
+    x_min = np.nanmin(x, axis=1)
+    x_max = np.nanmax(x, axis=1)
+    align_left = com < (x_min + x_max) / 2.0
+
+    shifts = np.where(align_left, target_x.min() - x_min, target_x.max() - x_max)
+
+    return shifts
 
 
 def check_source_grid(pos_local, grid_shape):

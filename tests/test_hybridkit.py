@@ -49,11 +49,36 @@ def dense_grid_geom(target_geom, pitch=source_pitch, margin=source_margin_um):
     return np.c_[x_grid.ravel(), z_grid.ravel()]
 
 
+def narrow_grid_geom(
+    target_geom, n_columns=3, pitch=source_pitch, margin=source_margin_um
+):
+    """Like dense_grid_geom, but spanning less x than target_geom does."""
+    geom = dense_grid_geom(target_geom, pitch=pitch, margin=margin)
+    x_center = (target_geom[:, 0].min() + target_geom[:, 0].max()) / 2.0
+    x_half = pitch * (n_columns - 1) / 2.0
+    assert 2 * x_half < np.ptp(target_geom[:, 0])
+    return geom[np.abs(geom[:, 0] - x_center) <= x_half + 1e-6]
+
+
 @pytest.fixture(scope="module")
 def target_geom():
     """A shortened NP1-like probe."""
     return simlib.generate_geom(
         num_columns=2, num_contact_per_column=12, y_shift_per_column="flat"
+    )
+
+
+@pytest.fixture(scope="module")
+def simulator(target_geom):
+    return sim_template_tools.get_template_simulator(
+        n_units=n_units,
+        templates_kind="3exp",
+        geom=target_geom,
+        sampling_frequency=fs,
+        common_reference=False,
+        temporal_jitter=1,
+        random_seed=0,
+        min_rms_distance=1.0,
     )
 
 
@@ -105,22 +130,12 @@ def zeros_recording(geom, num_samples):
 
 
 @pytest.mark.parametrize("drift", list(drift_params))
-def test_hybrid_matches_sim(tmp_path, target_geom, drift):
+def test_hybrid_matches_sim(tmp_path, target_geom, simulator, drift):
     """Sim ~= hybrid with zeros background, dense grid hybrid geom."""
     drift_speed = drift_params[drift]["drift_speed"]
     nonrigid = drift_params[drift]["nonrigid"]
     computation_cfg = ComputationConfig.from_n_jobs(1)
 
-    simulator = sim_template_tools.get_template_simulator(
-        n_units=n_units,
-        templates_kind="3exp",
-        geom=target_geom,
-        sampling_frequency=fs,
-        common_reference=False,
-        temporal_jitter=1,
-        random_seed=0,
-        min_rms_distance=1.0,
-    )
     sim = simkit.generate_simulation(
         tmp_path / "sim",
         tmp_path / "noise",
@@ -220,18 +235,8 @@ def test_hybrid_matches_sim(tmp_path, target_geom, drift):
 
 
 @pytest.mark.parametrize("trough_shift", [0, -3, 5])
-def test_misaligned_library(tmp_path, target_geom, trough_shift):
+def test_misaligned_library(tmp_path, target_geom, simulator, trough_shift):
     computation_cfg = ComputationConfig.from_n_jobs(1)
-    simulator = sim_template_tools.get_template_simulator(
-        n_units=n_units,
-        templates_kind="3exp",
-        geom=target_geom,
-        sampling_frequency=fs,
-        common_reference=False,
-        temporal_jitter=1,
-        random_seed=0,
-        min_rms_distance=1.0,
-    )
     nbefore = simulator.trough_offset_samples()
     library = np.roll(simulator.templates()[1], trough_shift, axis=1)
     si_templates = sc.Templates(
@@ -280,6 +285,81 @@ def test_misaligned_library(tmp_path, target_geom, trough_shift):
         snippet = traces[time - half : time + half + 1]
         trough_t, _ = np.unravel_index(snippet.argmin(), snippet.shape)
         assert trough_t == half
+
+
+def test_narrow_source_x_align(tmp_path, target_geom, simulator):
+    computation_cfg = ComputationConfig.from_n_jobs(1)
+    source_geom = narrow_grid_geom(target_geom)
+    assert np.ptp(source_geom[:, 0]) < np.ptp(target_geom[:, 0])
+    library = point_source_library(simulator, source_geom)
+    main_channels = np.abs(library).max(1).argmax(1)
+    si_templates = sc.Templates(
+        templates_array=library,
+        sampling_frequency=fs,
+        nbefore=simulator.trough_offset_samples(),
+        is_in_uV=True,
+        probe=probe_from_geom(source_geom),
+    )
+
+    spike_length = simulator.spike_length_samples()
+    refrac = 4 * spike_length
+    num_samples = int(duration_s * fs)
+    times = np.arange(spike_length, num_samples - refrac, refrac)
+    labels = np.arange(times.size) % n_units
+    injected_sorting = sc.NumpySorting.from_samples_and_labels(
+        [times], [labels], sampling_frequency=fs
+    )
+    simulator_kwargs = dict(
+        interp_method="grid_sample",
+        extract_radius=10 * np.ptp(source_geom[:, 1]),
+        depths=source_geom[main_channels, 1],
+    )
+
+    hybrid = hybridkit.make_hybrid_recording(
+        folder=tmp_path / "hybrid",
+        target_recording=zeros_recording(target_geom, num_samples),
+        injected_sorting=injected_sorting,
+        motion=MotionInfo.static(target_geom),
+        templates=si_templates,
+        filter=False,
+        remove_bad_channels=False,
+        template_peak_range=None,
+        template_x_align="amplitude",
+        amplitude_jitter=0.0,
+        temporal_jitter=1,
+        target_sampling_frequency=fs,
+        save_chunk_len_s=chunk_len_s,
+        template_simulator_kwargs=simulator_kwargs,
+        computation_cfg=computation_cfg,
+    )
+    assert hybrid.metadata["template_x_align"] == "amplitude"
+    np.testing.assert_array_equal(hybrid.gt_templates.registered_geom, target_geom)
+
+    # units to the left of the source probe went to the target's left column
+    x_low, x_high = target_geom[:, 0].min(), target_geom[:, 0].max()
+    source_center = (source_geom[:, 0].min() + source_geom[:, 0].max()) / 2.0
+    left = simulator.template_pos[:, 0] < source_center
+    assert left.any() and not left.all()
+
+    ptps = np.ptp(hybrid.gt_templates.templates, axis=1)
+    peak_x = target_geom[ptps.argmax(1), 0]
+    np.testing.assert_array_equal(peak_x, np.where(left, x_low, x_high))
+
+    library_ptps = np.ptp(library, axis=1).max(1)
+    assert (ptps.max(1) > 0.85 * library_ptps).all()
+
+    # whereas centering would have cost them most of it
+    centered = sim_template_tools.TemplateLibrarySimulator.from_template_library(
+        source_geom=source_geom,
+        target_geom=target_geom,
+        n_units=n_units,
+        templates=library,
+        x_align="center",
+        trough_offset_samples=simulator.trough_offset_samples(),
+        **simulator_kwargs,  # ty: ignore[invalid-argument-type]
+    )
+    centered_ptps = np.ptp(centered.templates()[1], axis=1)
+    assert (centered_ptps.max(1) < 0.6 * ptps.max(1)).all()
 
 
 def test_drift_is_actually_tested_but_not_too_much():
