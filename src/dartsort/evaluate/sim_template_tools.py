@@ -93,6 +93,12 @@ def singlechan_to_probe(pos, alpha, waveforms, geom3, decay_model="squared"):
     return templates
 
 
+def _check_drift_ok(drift, n_units, dtype=None):
+    drift = np.asarray(drift, dtype=dtype)
+    assert drift.ndim == 0 or drift.shape == (n_units,)
+    return drift
+
+
 # -- template sims
 
 
@@ -106,9 +112,12 @@ class BaseTemplateSimulator:
     def spike_length_samples(self) -> int:
         raise NotImplementedError
 
+    def template_depths(self) -> np.ndarray:
+        return self.templates()[0][:, 2]
+
     def templates(
         self,
-        drift: float = 0.0,
+        drift: float | np.ndarray = 0.0,
         up: bool = False,
         padded: bool = False,
         pad_value: float = float("nan"),
@@ -148,12 +157,12 @@ class StaticTemplateSimulator(BaseTemplateSimulator):
 
     def templates(
         self,
-        drift: float = 0.0,
+        drift: float | np.ndarray = 0.0,
         up: bool = False,
         padded: bool = False,
         pad_value: float = float("nan"),
     ):
-        assert not drift
+        assert not np.any(drift)
         loc = self.template_data.template_locations()
         assert loc.shape[1] == 2
         loc = np.c_[loc[:, 0], np.zeros_like(loc[:, 0]), loc[:, 1]]
@@ -288,8 +297,10 @@ class PointSource3ExpSimulator(BaseTemplateSimulator):
 
     def templates(self, drift=0, up=False, padded=False, pad_value=np.nan):
         pos = self.template_pos
-        if drift:
-            pos = pos + [0, 0, drift]
+        drift = _check_drift_ok(drift, self.n_units)
+        if drift.any():
+            pos = pos.copy()
+            pos[:, 2] += drift
 
         geom3 = self.geom3
         if padded:
@@ -309,6 +320,9 @@ class PointSource3ExpSimulator(BaseTemplateSimulator):
             templates[..., -1] = pad_value
         off = self.offsets_up if up else self.offsets
         return pos, templates, off
+
+    def template_depths(self):
+        return self.template_pos[:, 2]
 
     def trough_offset_samples(self):
         return int(self.ms_before * (self.sampling_frequency / 1000))
@@ -409,6 +423,9 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
 
     def spike_length_samples(self):
         return self.templates_local.shape[1]
+
+    def template_depths(self):
+        return self.template_pos[:, 2]
 
     @classmethod
     def from_template_library(
@@ -584,10 +601,16 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
         source_pos = self.pos_local[unit_ids]
         true_template_pos = self.template_pos[unit_ids]
         if drift is not None:
-            drift = self.templates_local.dtype.type(drift)
-            zero = self.templates_local.dtype.type(0.0)
-            source_pos = source_pos + [zero, drift]
-            true_template_pos = true_template_pos + [zero, zero, drift]
+            drift = _check_drift_ok(
+                drift, self.n_units, dtype=self.templates_local.dtype
+            )
+            if drift.ndim:
+                drift = drift[unit_ids]
+            if drift.any():
+                source_pos = source_pos.copy()
+                source_pos[..., 1] += drift[..., None]
+                true_template_pos = true_template_pos.copy()
+                true_template_pos[:, 2] += drift
 
         nu = len(true_template_pos)
         nc_out = len(self.geom) + 1

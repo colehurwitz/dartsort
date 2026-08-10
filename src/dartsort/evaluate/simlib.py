@@ -400,10 +400,12 @@ class InjectSpikesPreprocessor(BasePreprocessor):
     """Inject simulated spikes into a background recording
 
     Given a background (noise) recording, a spike train, a template simulator,
-    and a MotionInfo describing the (rigid) drift, this adds drifting, temporally
-    jittered and amplitude scaled templates into the recording. It can also
-    extract the ground truth waveforms and features of the injected spikes,
-    see save_features_to_hdf5() and save_simulation().
+    and a MotionInfo describing the (rigid or nonrigid) drift, this adds
+    drifting, temporally jittered and amplitude scaled templates into the
+    recording.
+
+    It can also extract the ground truth waveforms and features of the injected
+    spikes, see save_features_to_hdf5() and save_simulation().
 
     See simkit.make_simulated_recording() for a helper which samples the spike
     train and the motion before constructing one of these.
@@ -429,8 +431,6 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         super().__init__(recording)
         assert len(recording._recording_segments) == 1
         assert sorting.get_num_segments() == 1
-        # TODO
-        assert not motion.is_nonrigid
 
         self._serializability["json"] = False
         self._serializability["pickle"] = False
@@ -471,6 +471,10 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         self.wf_shape = (self.spike_length_samples, self.n_channels)
         self.template_shape = (self.n_units, *self.wf_shape)
         self.template_shape_up = (self.n_units, temporal_jitter, *self.wf_shape)
+
+        # registered unit depths, which is where the motion is evaluated
+        self.template_depths = np.asarray(template_simulator.template_depths())
+        assert self.template_depths.shape == (self.n_units,)
 
         # the spike train
         assert sorting.get_num_units() == self.n_units
@@ -528,14 +532,19 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         )
 
     def drift(self, t_samples):
-        """Rigid displacement (um) at the given sample indices."""
+        """Each unit's displacement (um) at the given sample index, shape (n_units,)."""
         if not self.motion.drifting:
             return np.zeros_like(t_samples)
         t_s = np.asarray(self.sample_index_to_time(np.asarray(t_samples)))
-        return self.motion.disp_at_s(t_s, np.zeros_like(t_s))
+        assert t_s.ndim == 0
+        disp = self.motion.disp_at_s(t_s.reshape(1), self.template_depths, grid=True)
+        return disp[:, 0]
 
-    def templates(self, t_samples=None, *, up=False, padded=False, pad_value=np.nan):
-        drift = 0 if t_samples is None else self.drift(t_samples)
+    def templates(
+        self, t_samples=None, *, drift=None, up=False, padded=False, pad_value=np.nan
+    ):
+        if drift is None:
+            drift = 0 if t_samples is None else self.drift(t_samples)
         pos, templates, offsets = self.template_simulator.templates(
             drift=drift, up=up, padded=padded, pad_value=pad_value
         )
@@ -629,7 +638,8 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         t_rel = t - (start_frame - self.margin)
         tix = t_rel[:, None] + self.snippet_time_ix
         tc = (start_frame + end_frame) / 2
-        pos, temps, offsets = self.templates(t_samples=tc, up=True, padded=extract)
+        drift = self.drift(tc)
+        pos, temps, offsets = self.templates(drift=drift, up=True, padded=extract)
         temps = temps[ll, u]
         temps *= s[:, None, None]
         temps_unpad = temps[..., :-1] if extract else temps
@@ -651,9 +661,8 @@ class InjectSpikesPreprocessor(BasePreprocessor):
             return spikes
 
         spikes["localizations"] = pos[ll]
-        spikes["displacements"] = np.full(
-            i1 - i0, self.drift(tc), dtype=self.features_dtype
-        )
+        drift = np.broadcast_to(drift, (self.n_units,))[ll]
+        spikes["displacements"] = drift.astype(self.features_dtype)
         ptp_vectors = ptp(temps_unpad, dim=1)
         c = ptp_vectors.argmax(axis=1)
         spikes["channels"] = c

@@ -2,6 +2,7 @@ import numpy as np
 import probeinterface
 import pytest
 import spikeinterface.core as sc
+from dredge import motion_util
 
 from dartsort.evaluate import hybridkit, sim_template_tools, simkit, simlib
 from dartsort.evaluate.noise_recording_tools import get_background_recording
@@ -16,7 +17,11 @@ source_pitch = 5.0
 source_margin_um = 30.0
 
 drift_period_s = 4.0
-drift_params = {"y": dict(drift_speed=10.0), "n": dict(drift_speed=0.0)}
+drift_params = {
+    "y": dict(drift_speed=10.0, nonrigid=False),
+    "n": dict(drift_speed=0.0, nonrigid=False),
+    "ynr": dict(drift_speed=10.0, nonrigid=True),
+}
 max_drift_um = (
     max(d["drift_speed"] for d in drift_params.values()) * drift_period_s / 4.0
 )
@@ -65,6 +70,26 @@ def point_source_library(simulator, geom):
     )
 
 
+def rigid_to_nonrigid(motion, n_bins=3):
+    assert not motion.is_nonrigid
+    me = motion.to_dredge()
+    assert me is not None
+    depths = motion.geom[:, 1]
+    spatial_bin_centers_um = np.linspace(depths.min(), depths.max(), num=n_bins)
+    displacement = np.broadcast_to(me.displacement, (n_bins, me.displacement.size))
+    nonrigid_me = motion_util.get_motion_estimate(
+        displacement=displacement.copy(),
+        time_bin_centers_s=me.time_bin_centers_s,
+        spatial_bin_centers_um=spatial_bin_centers_um,
+    )
+    nonrigid = MotionInfo.from_motion_est(
+        geom=motion.geom, dredge_motion_est=nonrigid_me
+    )
+    assert nonrigid.is_nonrigid
+    np.testing.assert_array_equal(nonrigid.rgeom, motion.rgeom)
+    return nonrigid
+
+
 def zeros_recording(geom, num_samples):
     recording = get_background_recording(
         None,
@@ -83,6 +108,7 @@ def zeros_recording(geom, num_samples):
 def test_hybrid_matches_sim(tmp_path, target_geom, drift):
     """Sim ~= hybrid with zeros background, dense grid hybrid geom."""
     drift_speed = drift_params[drift]["drift_speed"]
+    nonrigid = drift_params[drift]["nonrigid"]
     computation_cfg = ComputationConfig.from_n_jobs(1)
 
     simulator = sim_template_tools.get_template_simulator(
@@ -138,11 +164,15 @@ def test_hybrid_matches_sim(tmp_path, target_geom, drift):
         [gt_sorting.times_samples], [gt_sorting.labels], sampling_frequency=fs
     )
 
+    motion = sim["motion"]
+    if nonrigid:
+        motion = rigid_to_nonrigid(motion)
+
     hybrid = hybridkit.make_hybrid_recording(
         folder=tmp_path / "hybrid",
         target_recording=zeros_recording(target_geom, num_samples),
         injected_sorting=injected_sorting,
-        motion=sim["motion"],
+        motion=motion,
         templates=si_templates,
         filter=False,
         remove_bad_channels=False,
