@@ -205,6 +205,7 @@ class DARTsortUserConfig:
     """Upsampling of templates during matching to allow for temporal aliasing of waveforms."""
 
     # -- final merge step
+    #TODO name this more prominently, clarify flags for dedup ms, decouple dedup and agg
     agg_kind: Literal["none", "template_distance", "qda"] = "qda"
     """Final distance or GMM-based merge type."""
 
