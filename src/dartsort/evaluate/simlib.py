@@ -119,7 +119,7 @@ def piecewise_refractory_poisson_spike_train(rates, bins, binsize_samples, **kwa
     :param **kwargs: kwargs to feed to refractory_poisson_spike_train()
     """
     st = []
-    for rate, bin in zip(rates, bins):
+    for rate, bin in zip(rates, bins, strict=True):
         if rate < 0.05:
             continue
         binst = refractory_poisson_spike_train(
@@ -155,7 +155,7 @@ def simulate_sorting(
     elif firing_rates is None:
         firing_rates = rg.uniform(1.0, 10.0, num_units)
     else:
-        assert False
+        raise ValueError(f"{firing_rates.shape=}")
 
     if firing_rates.ndim == 2:
         assert not globally_refractory
@@ -339,7 +339,7 @@ def add_features(h5_path, recording, featurization_cfg, computation_cfg):
             _, feats = gt_pipeline(
                 chunk, channels=cast(h5py.Dataset, h5["channels"])[sli]
             )
-            for k in f_dsets:
+            for k in f_dsets:  # noqa: PLC0206
                 f_dsets[k][sli] = feats[k].numpy(force=True)
 
 
@@ -388,7 +388,7 @@ def simulate_twostate_switching(
                 size=n_aff, low=min_fr, high=down_max_fr
             )
         else:
-            assert False
+            raise ValueError(aff)
 
     return states, states_onehot @ frs_by_state
 
@@ -963,8 +963,8 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         if recording_dir.exists():
             try:
                 recording = read_binary_folder(recording_dir)
-                logger.info("Loaded", recording_dir)
-            except Exception:
+                logger.info("Loaded %s", recording_dir)
+            except Exception:  # noqa: BLE001
                 recording = None
         else:
             recording = None

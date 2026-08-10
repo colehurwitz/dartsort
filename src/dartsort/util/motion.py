@@ -1,7 +1,7 @@
 import pickle
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Self, cast
+from typing import Literal, Self, cast
 
 import numpy as np
 from dredge.motion_util import MotionEstimate

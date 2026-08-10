@@ -254,7 +254,7 @@ class TruncatedMixtureModelTransformer(BaseWaveformFeaturizer):
             clustering_features_cfg=self.clustering_features_cfg,
             computation_cfg=computation_cfg,
         )
-        mix_data: "MixtureModelAndDatasets" = clus.get_tmm(
+        mix_data: MixtureModelAndDatasets = clus.get_tmm(
             features=simple_features,
             stable_features=stable_features,
             sorting=sorting,
@@ -274,7 +274,7 @@ class TruncatedMixtureModelTransformer(BaseWaveformFeaturizer):
         # and not needed for inference
         # one could implement serialization logic for them, I just didn't
         mix_data.tmm.erp = None
-        self.tmm: "TruncatedMixtureModel" = mix_data.tmm
+        self.tmm: TruncatedMixtureModel = mix_data.tmm
         self.register_buffer("neighborhoods", mix_data.tmm.neighb_cov.b.obs_ix.clone())
         _, self.workers = handle_negative_jobs(
             computation_cfg.actual_n_jobs(small=True)
