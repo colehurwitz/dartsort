@@ -21,6 +21,7 @@ from .simlib import InjectSpikesPreprocessor
 class HybridDataset:
     gt_sorting: DARTsortSorting
     gt_templates: TemplateData
+    si_templates: sc.Templates
     gt_unit_info: pd.DataFrame
     recording: sc.BaseRecording
     motion: MotionInfo
@@ -47,10 +48,12 @@ def load_hybrid_recording(folder: str | Path) -> HybridDataset | None:
     unit_info_df = pd.read_csv(unit_info_csv)
     with meta_json.open("r") as jsonf:
         metadata = json.load(jsonf)
+    si_templates = sc.Templates.from_zarr(folder / "si_templates.zarr")
 
     return HybridDataset(
         recording=recording,
         gt_templates=templates,
+        si_templates=si_templates,
         gt_sorting=sorting,
         motion=motion,
         gt_unit_info=unit_info_df,
@@ -126,7 +129,7 @@ def make_hybrid_recording(
                 save_chunk_len_s / 2,
                 target_recording.get_total_duration(),
                 save_chunk_len_s,
-            )
+            ),
         )
 
     if template_peak_range is not None:
@@ -144,11 +147,9 @@ def make_hybrid_recording(
 
     template_simulator_kwargs = dict(template_simulator_kwargs or {})
     template_simulator_kwargs.setdefault("trough_offset_samples", templates.nbefore)
-    # when the library's probe is narrower than the target's, "amplitude" puts
-    # each unit on the side of ptp com
     template_simulator_kwargs.setdefault("x_align", template_x_align)
+    template_simulator_kwargs.setdefault("common_reference", False)
     if templates.probe is not None:
-        # the library's own geometry is where its templates were sampled
         template_simulator_kwargs.setdefault(
             "source_geom", templates.get_channel_locations()
         )
@@ -206,6 +207,7 @@ def make_hybrid_recording(
     )
     with (ensure_path(folder) / "metadata.json").open("w") as jsonf:
         json.dump(metadata, jsonf)
+    templates.to_zarr(ensure_path(folder) / "si_templates.zarr")
 
     res = load_hybrid_recording(folder)
     assert res is not None
