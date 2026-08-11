@@ -66,11 +66,8 @@ class BModule(Module):
             self.register_cpu_buffer(name, buf)
 
     def __getstate__(self):
-        try:
-            del self.___bgetter
-        except AttributeError:
-            pass
         state = super().__getstate__()
+        state.pop("_BModule___bgetter", None)
         return state
 
     def __setstate__(self, state):
