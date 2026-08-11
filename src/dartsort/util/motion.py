@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal, Self, cast
 
 import numpy as np
-from dredge.motion_util import MotionEstimate
+from dredge.motion_util import MotionEstimate, get_motion_estimate
 from scipy.spatial import KDTree
 from scipy.spatial.distance import pdist
 from spikeinterface.core import BaseRecording, Motion
@@ -425,6 +425,42 @@ class MotionInfo:
         else:
             assert not self.drifting
             return None
+
+
+def resample_motion(
+    *,
+    motion: MotionInfo,
+    query_time_bin_centers: np.ndarray,
+    new_motion_time_bin_centers: np.ndarray | None = None,
+) -> MotionInfo:
+    if not motion.drifting:
+        return motion
+
+    query_time_bin_centers = np.asarray(query_time_bin_centers)
+    if new_motion_time_bin_centers is None:
+        new_motion_time_bin_centers = query_time_bin_centers
+    new_motion_time_bin_centers = np.asarray(new_motion_time_bin_centers)
+    assert query_time_bin_centers.ndim == 1
+    assert query_time_bin_centers.shape == new_motion_time_bin_centers.shape
+
+    if motion.is_nonrigid:
+        spatial_bin_centers_um = motion.spatial_bins_um
+        displacement = motion.disp_at_s(
+            query_time_bin_centers, spatial_bin_centers_um, grid=True
+        )
+    else:
+        spatial_bin_centers_um = None
+        displacement = motion.disp_at_s(
+            query_time_bin_centers, np.zeros_like(query_time_bin_centers)
+        )
+
+    motion_est = get_motion_estimate(
+        displacement,
+        time_bin_centers_s=new_motion_time_bin_centers,
+        spatial_bin_centers_um=spatial_bin_centers_um,
+    )
+
+    return MotionInfo.from_motion_est(geom=motion.geom, dredge_motion_est=motion_est)
 
 
 def detect_for_motion(

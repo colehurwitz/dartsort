@@ -11,7 +11,7 @@ import spikeinterface.preprocessing as spre
 from ..templates import TemplateData
 from ..util.data_util import DARTsortSorting, ensure_path
 from ..util.job_util import ensure_computation_config
-from ..util.motion import MotionInfo
+from ..util.motion import MotionInfo, resample_motion
 from ..util.py_util import databag
 from .sim_template_tools import get_template_simulator
 from .simlib import InjectSpikesPreprocessor
@@ -104,11 +104,30 @@ def make_hybrid_recording(
         injected_sorting = injected_sorting.frame_slice(frame_start, frame_end)
 
     if reset_times:
+        # for motion:
+        motion_query_times = np.arange(
+            target_recording.get_start_time() + save_chunk_len_s / 2,
+            target_recording.get_end_time(),
+            save_chunk_len_s,
+        )
+
         target_recording.reset_times()
         if abs(target_recording.sampling_frequency - target_sampling_frequency) > 10.0:
             raise ValueError("Sampling...")
         target_recording._sampling_frequency = target_sampling_frequency
         target_recording.reset_times()
+
+        injected_sorting._sampling_frequency = target_sampling_frequency
+
+        motion = resample_motion(
+            motion=motion,
+            query_time_bin_centers=motion_query_times,
+            new_motion_time_bin_centers=np.arange(
+                save_chunk_len_s / 2,
+                target_recording.get_total_duration(),
+                save_chunk_len_s,
+            )
+        )
 
     if template_peak_range is not None:
         templates = rescale_templates(templates, template_peak_range, rg)
