@@ -451,9 +451,24 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
         dtype="float32",
         interp_method: Literal["dart", "grid_sample"] = "dart",
         grid_sample_mode="bicubic",
-        interp_params: InterpolationParams = tps_interp_params,
+        interp_params: InterpolationParams | str = tps_interp_params,
     ):
         rg = np.random.default_rng(seed)
+
+        if interp_params == "kriging":
+            interp_params = InterpolationParams(
+                kernel="rbf",
+                kriging_poly_degree=1,
+            )
+        elif interp_params == "idw":
+            interp_params = InterpolationParams(method="kernel", kernel="idw")
+        elif interp_params == "tps0":
+            interp_params = InterpolationParams(
+                kernel="thinplate", kriging_poly_degree=0, extrap_method="zero"
+            )
+        else:
+            if not isinstance(interp_params, InterpolationParams):
+                panic(interp_params)
 
         if target_geom is None:
             target_geom = source_geom
