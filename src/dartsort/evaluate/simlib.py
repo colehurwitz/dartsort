@@ -966,7 +966,7 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         if extra_unit_information is not None:
             assert extra_unit_information.index.name is None
             assert len(unit_df) == len(extra_unit_information)
-            unit_df = pd.concat(unit_df, axis=1)
+            unit_df = pd.concat([unit_df, extra_unit_information], axis=1)
 
         if recording_dir.exists():
             try:
