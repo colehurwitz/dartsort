@@ -397,7 +397,6 @@ class BasePeeler(BModule):
 
             # we very much do not want to leak self into a global and have its
             # memory tied up while dartsort wants to go do other stuff
-            del _peeler_process_context.ctx
             _peeler_process_context.ctx = None
 
         return output_hdf5_filename
