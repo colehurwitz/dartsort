@@ -1,3 +1,5 @@
+import gc
+import sys
 import warnings
 from dataclasses import replace
 from pathlib import Path
@@ -50,6 +52,7 @@ from ..util.waveform_util import make_channel_index
 if TYPE_CHECKING:
     from .sim_template_tools import TemplateSimulator
 
+_can_buffer = sys.version_info >= (3, 14)
 logger = get_logger(__name__)
 
 default_temporal_kernel_npy = files("dartsort.pretrained")
@@ -702,7 +705,7 @@ class InjectSpikesPreprocessor(BasePreprocessor):
             spikes["noise_waveforms"] = noise_waveforms
             spikes["injected_waveforms"] = injected_waveforms
             spikes["collisioncleaned_waveforms"] = collisioncleaned_waveforms
-        spikes["echans"] = echans
+            spikes["echans"] = echans
 
         return spikes
 
@@ -739,7 +742,8 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         )
 
         if not inject and not self.compute_collision_waveforms:
-            return traces, spikes
+            del traces
+            return None, spikes
 
         waveforms = cast(np.ndarray, spikes["waveforms"])
         tix = cast(np.ndarray, spikes["tix"])
@@ -784,6 +788,7 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         save_collisioncleaned_waveforms=True,
         save_collidedness=False,
         chunk_len_s=0.5,
+        buffersize=32,
     ):
         if overwrite:
             if hdf5_path.exists():
@@ -798,96 +803,116 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         )
 
         n_jobs, Executor, context = get_pool(n_jobs, cls="ThreadPoolExecutor")
-        with Executor(max_workers=n_jobs, mp_context=context) as pool:
-            nt = self.get_num_frames()
-            bs = int(self.sampling_frequency * chunk_len_s)
-            chunk_starts = range(0, nt, bs)
-            n_residual_snips = min(n_residual_snips, nt // self.spike_length_samples)
-            residual_snips_per_chunk = divide_randomly(
-                n_residual_snips, len(chunk_starts), self.random_seed
+        with h5py.File(hdf5_path, "w", locking=False) as h5:
+            n = self.n_spikes
+
+            # fixed arrays
+            h5.create_dataset("sampling_frequency", data=self.sampling_frequency)
+            h5.create_dataset("geom", data=self.get_channel_locations())
+            h5.create_dataset("channel_index", data=self.extract_channel_index)
+            times_samples = self.times_samples + self.upsampling_offsets
+            h5.create_dataset("times_samples", data=times_samples)
+            h5.create_dataset(
+                "times_seconds",
+                data=self.sample_index_to_time(times_samples),
             )
-            jobs = (
-                (
-                    (t, min(t + bs, nt)),
-                    dict(extract=True, n_residual_snips=nrs, get_injected=get_injected),
-                )
-                for t, nrs in zip(chunk_starts, residual_snips_per_chunk, strict=True)
+            h5.create_dataset("labels", data=self.labels)
+            h5.create_dataset("scalings", data=self.scalings)
+            h5.create_dataset("jitter_ix", data=self.jitter_ix)
+            pos, temp, off = self.template_simulator.templates(up=True)
+            h5.create_dataset("unit_positions", data=pos)
+            h5.create_dataset("up_offsets", data=off)
+            h5.create_dataset("templates_up", data=temp)
+            for k, v in (self.extra_data_to_save or {}).items():
+                h5.create_dataset(k, data=v)
+
+            del times_samples, pos, temp, off
+
+            gc.collect()
+            gc.collect()
+
+            # arrays discovered in batches below
+            f_dt = self.features_dtype
+            inj_wf_shape = (
+                self.spike_length_samples,
+                self.extract_channel_index.shape[1],
             )
-            with h5py.File(hdf5_path, "w", locking=False) as h5:
-                n = self.n_spikes
+            dataset_shapes = {
+                "localizations": ((3,), f_dt),
+                "displacements": ((), f_dt),
+                "ptp_amplitudes": ((), f_dt),
+                "channels": ((), np.int32),
+                "time_shifts": ((), np.int16),
+                "collidedness": ((), f_dt),
+            }
+            if save_collisioncleaned_waveforms:
+                dataset_shapes["collisioncleaned_waveforms"] = (inj_wf_shape, f_dt)
+            if save_injected_waveforms:
+                dataset_shapes["injected_waveforms"] = (inj_wf_shape, f_dt)
+            if save_noise_waveforms:
+                dataset_shapes["noise_waveforms"] = (inj_wf_shape, f_dt)
+            if save_collision_waveforms:
+                dataset_shapes["collision_waveforms"] = (inj_wf_shape, f_dt)
+            if save_collidedness:
+                dataset_shapes["gt_collidedness"] = ((), f_dt)
+            datasets = {
+                k: h5.create_dataset(k, dtype=dt, shape=(n, *sh))
+                for k, (sh, dt) in dataset_shapes.items()
+            }
 
-                # fixed arrays
-                h5.create_dataset("sampling_frequency", data=self.sampling_frequency)
-                h5.create_dataset("geom", data=self.get_channel_locations())
-                h5.create_dataset("channel_index", data=self.extract_channel_index)
-                times_samples = self.times_samples + self.upsampling_offsets
-                h5.create_dataset("times_samples", data=times_samples)
-                h5.create_dataset(
-                    "times_seconds",
-                    data=self.sample_index_to_time(times_samples),
+            # residual snippets
+            if n_residual_snips:
+                nrs_dset = h5.create_dataset(
+                    "n_residuals", data=np.zeros((), dtype=np.int64)
                 )
-                h5.create_dataset("labels", data=self.labels)
-                h5.create_dataset("scalings", data=self.scalings)
-                h5.create_dataset("jitter_ix", data=self.jitter_ix)
-                pos, temp, off = self.template_simulator.templates(up=True)
-                h5.create_dataset("unit_positions", data=pos)
-                h5.create_dataset("up_offsets", data=off)
-                h5.create_dataset("templates_up", data=temp)
-                for k, v in (self.extra_data_to_save or {}).items():
-                    h5.create_dataset(k, data=v)
-
-                # arrays discovered in batches below
-                f_dt = self.features_dtype
-                inj_wf_shape = (
-                    self.spike_length_samples,
-                    self.extract_channel_index.shape[1],
+                residual = h5.create_dataset(
+                    "residual",
+                    shape=(n_residual_snips, *self.wf_shape),
+                    maxshape=(n_residual_snips, *self.wf_shape),
+                    chunks=(min(16, n_residual_snips), *self.wf_shape),
+                    dtype=f_dt,
                 )
-                dataset_shapes = {
-                    "localizations": ((3,), f_dt),
-                    "displacements": ((), f_dt),
-                    "ptp_amplitudes": ((), f_dt),
-                    "channels": ((), np.int32),
-                    "time_shifts": ((), np.int16),
-                }
-                if save_collisioncleaned_waveforms:
-                    dataset_shapes["collisioncleaned_waveforms"] = (inj_wf_shape, f_dt)
-                if save_injected_waveforms:
-                    dataset_shapes["injected_waveforms"] = (inj_wf_shape, f_dt)
-                if save_noise_waveforms:
-                    dataset_shapes["noise_waveforms"] = (inj_wf_shape, f_dt)
-                if save_collision_waveforms:
-                    dataset_shapes["collision_waveforms"] = (inj_wf_shape, f_dt)
-                dataset_shapes["collidedness"] = ((), f_dt)
-                if save_collidedness:
-                    dataset_shapes["gt_collidedness"] = ((), f_dt)
-                datasets = {
-                    k: h5.create_dataset(k, dtype=dt, shape=(n, *sh))
-                    for k, (sh, dt) in dataset_shapes.items()
-                }
+                residual_times = h5.create_dataset(
+                    "residual_times_seconds",
+                    shape=(n_residual_snips,),
+                    maxshape=(n_residual_snips,),
+                    chunks=(min(16, n_residual_snips),),
+                    dtype=f_dt,
+                )
+            else:
+                nrs_dset = residual = residual_times = None
 
-                # residual snippets
-                if n_residual_snips:
-                    nrs_dset = h5.create_dataset(
-                        "n_residuals", data=np.zeros((), dtype=np.int64)
+            with Executor(max_workers=n_jobs, mp_context=context) as pool:
+                nt = self.get_num_frames()
+                bs = int(self.sampling_frequency * chunk_len_s)
+                chunk_starts = range(0, nt, bs)
+                n_residual_snips = min(
+                    n_residual_snips, nt // self.spike_length_samples
+                )
+                residual_snips_per_chunk = divide_randomly(
+                    n_residual_snips, len(chunk_starts), self.random_seed
+                )
+                jobs = (
+                    (
+                        (t, min(t + bs, nt)),
+                        dict(
+                            extract=True,
+                            n_residual_snips=nrs,
+                            get_injected=get_injected,
+                        ),
                     )
-                    residual = h5.create_dataset(
-                        "residual",
-                        shape=(n_residual_snips, *self.wf_shape),
-                        maxshape=(n_residual_snips, *self.wf_shape),
-                        chunks=(min(16, n_residual_snips), *self.wf_shape),
-                        dtype=f_dt,
+                    for t, nrs in zip(
+                        chunk_starts, residual_snips_per_chunk, strict=True
                     )
-                    residual_times = h5.create_dataset(
-                        "residual_times_seconds",
-                        shape=(n_residual_snips,),
-                        maxshape=(n_residual_snips,),
-                        chunks=(min(16, n_residual_snips),),
-                        dtype=f_dt,
+                )
+                if _can_buffer:
+                    results = pool.map(
+                        self._get_traces_and_inject_spikes_job,
+                        jobs,
+                        buffersize=buffersize,
                     )
                 else:
-                    nrs_dset = residual = residual_times = None
-
-                results = pool.map(self._get_traces_and_inject_spikes_job, jobs)
+                    results = pool.map(self._get_traces_and_inject_spikes_job, jobs)
                 if show_progress:
                     results = progbar(
                         results,
@@ -953,6 +978,8 @@ class InjectSpikesPreprocessor(BasePreprocessor):
         save_collidedness=False,
         extra_unit_information: pd.DataFrame | None = None,
         chunk_len_s=0.5,
+        pool_engine="thread",
+        mp_context="spawn",
     ):
         folder = ensure_path(folder)
         folder.mkdir(exist_ok=True)
@@ -982,8 +1009,9 @@ class InjectSpikesPreprocessor(BasePreprocessor):
                     folder=recording_dir,
                     overwrite=True,
                     n_jobs=n_jobs or 1,
-                    pool_engine="thread",
+                    pool_engine=pool_engine,
                     chunk_duration=chunk_len_s,
+                    mp_context=mp_context,
                 )
                 for w in ws:
                     msg = str(w.message)

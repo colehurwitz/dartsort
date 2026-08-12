@@ -84,6 +84,7 @@ def make_hybrid_recording(
     template_simulator_kwargs: dict | None = None,
     metadata: dict[str, Any] | None = None,
     computation_cfg=None,
+    pool_engine="thread",
     extra_unit_information: pd.DataFrame | None = None,
     rg: np.random.Generator | int = 0,
 ) -> HybridDataset:
@@ -190,6 +191,7 @@ def make_hybrid_recording(
         save_collidedness=False,
         extra_unit_information=extra_unit_information,
         n_residual_snips=0,
+        pool_engine=pool_engine,
     )
     metadata = dict(metadata or {})
     metadata.update(
