@@ -357,8 +357,9 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
         common_reference=False,
         trough_offset_samples=42,
         svd_rank=16,
-        interp_method: Literal["dart", "grid_sample"] = "dart",
+        interp_method: Literal["dart", "grid_sample", "grid_sample_average"] = "dart",
         grid_sample_mode="bicubic",
+        grid_average_offset_um: float = 3.0,
         interp_params: InterpolationParams = tps_interp_params,
     ):
         self.geom = geom
@@ -395,7 +396,18 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
         assert np.isfinite(self.low_rank_templates.spatial_components).all()
         self.pos_local = pos_local
 
-        if interp_method == "grid_sample":
+        self.interp_method = interp_method
+        if interp_method == "dart":  # noqa: SIM114
+            self.grid_avg_offsets = np.zeros(1)
+        elif interp_method == "grid_sample":
+            self.grid_avg_offsets = np.zeros(1)
+        elif interp_method == "grid_sample_average":
+            self.grid_avg_offsets = np.array([-grid_average_offset_um, grid_average_offset_um])
+        else:
+            panic(interp_method)
+
+        # precompute interpolation stuff
+        if interp_method in ("grid_sample", "grid_sample_average"):
             # grid sample only supports regular grids, asserting that...
             if source_geom is not None:
                 n_cols = np.unique(source_geom[:, 0]).size
@@ -406,17 +418,14 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
             assert not rem
             self.grid_shape = (n_rows, n_cols)
             check_source_grid(pos_local, self.grid_shape)
-        else:
+            self.precomputed_data = None
+        elif interp_method == "dart":
             self.grid_shape = None
-
-        # precompute interpolation data
-        self.interp_method = interp_method
-        if interp_method == "dart":
             self.precomputed_data = interp_precompute(
                 source_pos=pos_local, params=self.interp_params
             )
         else:
-            self.precomputed_data = None
+            panic(interp_method)
 
         _, _, offsets_up = self.templates(up=True)
         offsets_up = offsets_up - self.trough_offset_samples()
@@ -449,8 +458,9 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
         x_align: Literal["center", "amplitude"] = "center",
         seed=0,
         dtype="float32",
-        interp_method: Literal["dart", "grid_sample"] = "dart",
+        interp_method: Literal["dart", "grid_sample", "grid_sample_average"] = "dart",
         grid_sample_mode="bicubic",
+        grid_average_offset_um: float = 3.0,
         interp_params: InterpolationParams | str = tps_interp_params,
     ):
         rg = np.random.default_rng(seed)
@@ -482,7 +492,7 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
         templates = templates.astype(dtype)
 
         assert np.isfinite(templates).all()
-        if interp_method == "grid_sample":
+        if interp_method in ("grid_sample", "grid_sample_average"):
             # requires a regular grid input geom!
             nx = np.unique(source_geom[:, 0]).size
             ny = np.unique(source_geom[:, 1]).size
@@ -492,10 +502,12 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
             assert (channel_index < len(source_geom)).all()
             # whole rows should be multiple of num columns
             assert not channel_index.shape[1] % nx
-        else:
+        elif interp_method == "dart":
             channel_index = make_channel_index(
                 source_geom, extract_radius, to_torch=False
             )
+        else:
+            panic(interp_method)
         main_channels = np.abs(templates).max(1).argmax(1)
         template_channels = channel_index[main_channels]
 
@@ -548,6 +560,7 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
             radius=inject_radius,
             interp_method=interp_method,
             grid_sample_mode=grid_sample_mode,
+            grid_average_offset_um=grid_average_offset_um,
             interp_params=interp_params,
         )
 
@@ -563,7 +576,7 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
                 params=self.interp_params,
                 precomputed_data=self.precomputed_data[unit_ids],
             ).numpy(force=True)
-        elif self.interp_method == "grid_sample":
+        elif self.interp_method in ("grid_sample", "grid_sample_average"):
             assert self.grid_shape is not None
             n, r, cloc = spatial_singular.shape
             h, w = self.grid_shape
@@ -597,8 +610,9 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
                 padding_mode="zeros",
                 align_corners=True,
             )
-            # target positions were (n, hout=1, wout=n_chans, 2)
-            out = out[:, :, 0].numpy(force=True)
+            # handle the average part of grid_sample_average
+            # which is just mean over 1 thing if we're just grid_sample
+            out = out.mean(2).numpy(force=True)
         else:
             panic(self.interp_method)
 
@@ -638,13 +652,17 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
         out = np.zeros((nu, up_factor * nt, nc_out), dtype=self.templates_local.dtype)
 
         tgeom = self.geom.astype(self.templates_local.dtype)
-        if self.interp_method == "grid_sample":
+        if self.interp_method in ("grid_sample", "grid_sample_average"):
             # in grid sample I'm just doing the whole thing...
-            target_pos = torch.asarray(tgeom)[None, None].expand(nu, 1, -1, 2)
+            # sample at target pos with offsets which could be just a 0 for average mode
+            # my shape is Hout=len(grid_avg_offsets), n_chans, 2
+            target_pos = np.repeat(tgeom[None], len(self.grid_avg_offsets), axis=0)
+            target_pos[..., 1] += self.grid_avg_offsets[:, None].astype(tgeom.dtype)
+            target_pos = torch.asarray(target_pos)[None].expand(nu, -1, -1, 2)
             out[..., :-1] = self.interpolate_templates(
                 source_pos, target_pos, unit_ids, up=up
             )
-        else:
+        elif self.interp_method == "dart":
             _, target_chans = self.geom_kdt.query(true_template_pos[:, [0, 2]])
             tgeom = np.pad(tgeom, [(0, 1), (0, 0)], constant_values=np.nan)
             target_chans = self.channel_index[target_chans]
@@ -653,6 +671,8 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
                 source_pos, target_pos, unit_ids, up=up
             )
             np.put_along_axis(out, target_chans[:, None, :], templates, axis=2)
+        else:
+            panic(self.interp_method)
 
         if up:
             out = out.reshape(nu, up_factor, nt, nc_out)

@@ -235,7 +235,12 @@ def test_hybrid_matches_sim(tmp_path, target_geom, simulator, drift):
 
 
 @pytest.mark.parametrize("trough_shift", [0, -3, 5])
-def test_misaligned_library(tmp_path, target_geom, simulator, trough_shift):
+@pytest.mark.parametrize(
+    "interp_method", ["dart", "grid_sample", "grid_sample_average"]
+)
+def test_misaligned_library(
+    tmp_path, target_geom, simulator, trough_shift, interp_method
+):
     computation_cfg = ComputationConfig.from_n_jobs(1)
     nbefore = simulator.trough_offset_samples()
     library = np.roll(simulator.templates()[1], trough_shift, axis=1)
@@ -270,10 +275,12 @@ def test_misaligned_library(tmp_path, target_geom, simulator, trough_shift):
         target_sampling_frequency=fs,
         save_chunk_len_s=chunk_len_s,
         template_simulator_kwargs=dict(
-            interp_method="dart", extract_radius=10 * np.ptp(target_geom[:, 1])
+            interp_method=interp_method,
+            extract_radius=10 * np.ptp(target_geom[:, 1]),
         ),
         computation_cfg=computation_cfg,
     )
+    assert hybrid.metadata["template_interp_method"] == interp_method
 
     # check sim times are shifted by the same shifts
     np.testing.assert_array_equal(hybrid.gt_sorting.times_samples, times + trough_shift)
@@ -360,6 +367,64 @@ def test_narrow_source_x_align(tmp_path, target_geom, simulator):
     )
     centered_ptps = np.ptp(centered.templates()[1], axis=1)
     assert (centered_ptps.max(1) < 0.6 * ptps.max(1)).all()
+
+
+def test_grid_sample_average(target_geom, simulator):
+    source_geom = dense_grid_geom(target_geom)
+    library = point_source_library(simulator, source_geom)
+    main_channels = np.abs(library).max(1).argmax(1)
+    offset = source_pitch / 2.0
+    shared = dict(
+        source_geom=source_geom,
+        n_units=n_units,
+        templates=library,
+        depths=source_geom[main_channels, 1],
+        extract_radius=10 * np.ptp(source_geom[:, 1]),
+        trough_offset_samples=simulator.trough_offset_samples(),
+    )
+
+    avg_temp_sim = sim_template_tools.TemplateLibrarySimulator.from_template_library(
+        target_geom=target_geom,
+        interp_method="grid_sample_average",
+        grid_average_offset_um=offset,
+        **shared,  # ty: ignore[invalid-argument-type]
+    )
+    np.testing.assert_array_equal(avg_temp_sim.grid_avg_offsets, [-offset, offset])
+
+    # shifting the target geom is the same as offsetting the interpolation
+    # check that at a couple of drifts
+    sample_sims = [
+        sim_template_tools.TemplateLibrarySimulator.from_template_library(
+            target_geom=target_geom + [0.0, shift],
+            interp_method="grid_sample",
+            **shared,  # ty: ignore[invalid-argument-type]
+        )
+        for shift in (-offset, offset)
+    ]
+    for drift_um in (0.0, max_drift_um, -max_drift_um):
+        drift = np.full(n_units, drift_um)
+        templates = avg_temp_sim.templates(drift=drift)[1]
+        mean_of_shifted = np.mean(
+            [sim.templates(drift=drift)[1] for sim in sample_sims], axis=0
+        )
+        scale = np.abs(mean_of_shifted).max()
+        assert scale > 1.0
+        np.testing.assert_allclose(templates, mean_of_shifted, atol=1e-5 * scale)
+
+    # check that we are testing something, ie that not doing any of this is different
+    plain = sim_template_tools.TemplateLibrarySimulator.from_template_library(
+        target_geom=target_geom,
+        interp_method="grid_sample",
+        **shared,  # ty: ignore[invalid-argument-type]
+    )
+    np.testing.assert_array_equal(plain.grid_avg_offsets, [0.0])
+    avg_temps = avg_temp_sim.templates()[1]
+    avg_ptps = np.ptp(avg_temps, axis=1).max(1)
+    plain_temps = plain.templates()[1]
+    plain_ptps = np.ptp(plain_temps, axis=1).max(1)
+    assert not np.allclose(avg_temps, plain_temps, atol=1e-5 * scale)
+    assert (avg_ptps < plain_ptps).all()
+    assert (avg_ptps > 0.9 * plain_ptps).all()
 
 
 def test_drift_is_actually_tested_but_not_too_much():

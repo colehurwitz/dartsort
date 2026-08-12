@@ -13,7 +13,7 @@ from ..util.data_util import DARTsortSorting, ensure_path
 from ..util.job_util import ensure_computation_config
 from ..util.motion import MotionInfo, resample_motion
 from ..util.py_util import databag
-from .sim_template_tools import get_template_simulator
+from .sim_template_tools import TemplateLibrarySimulator, get_template_simulator
 from .simlib import InjectSpikesPreprocessor
 
 
@@ -164,6 +164,7 @@ def make_hybrid_recording(
         random_seed=rg,
         **template_simulator_kwargs,
     )
+    assert isinstance(template_simulator, TemplateLibrarySimulator)
     hybrid_recording = InjectSpikesPreprocessor(
         recording=target_recording,
         sorting=injected_sorting,
@@ -201,6 +202,8 @@ def make_hybrid_recording(
         remove_bad_channels=remove_bad_channels,
         template_peak_range=template_peak_range,
         template_x_align=template_simulator_kwargs["x_align"],
+        template_interp_method=template_simulator.interp_method,
+        template_grid_avg_offsets=template_simulator.grid_avg_offsets.tolist(),
         reset_times=reset_times,
         target_sampling_frequency=target_sampling_frequency,
         amplitude_jitter=amplitude_jitter,
