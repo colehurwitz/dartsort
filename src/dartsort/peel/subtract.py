@@ -434,7 +434,7 @@ class SubtractionPeeler(BasePeeler):
 
         # run mini subtraction
         if tmp_dir is None:
-            tmp_dir = computation_cfg.tmpdir_parent
+            tmp_dir = computation_cfg.maybe_tmpdir_parent()
         with TemporaryDirectory(dir=tmp_dir) as temp_dir:
             temp_hdf5_filename = Path(temp_dir) / f"subtraction_{which[:-1]}_fit.h5"
             try:

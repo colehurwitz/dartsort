@@ -140,7 +140,9 @@ def dartsort(
     check_recording(recording)
 
     if cfg.work_in_tmpdir:
-        with TemporaryDirectory(prefix="dartsort", dir=cfg.tmpdir_parent) as work_dir:
+        with TemporaryDirectory(
+            prefix="dartsort", dir=cfg.maybe_tmpdir_parent()
+        ) as work_dir:
             # copy files and possibly recording to temporary directory
             work_dir = ensure_path(work_dir)
             logger.dartsortdebug(f"Working in {work_dir}, outputs to {output_dir}.")
@@ -597,7 +599,7 @@ def match(
     previous_detection_cfg: Any | None = None,
     prev_step_name: str | None = None,
     save_cfg: DARTsortInternalConfig | None = None,
-    chunk_starts_samples = None,
+    chunk_starts_samples=None,
     stop_after_n_spikes: int | None = None,
     ensure_coverage: float | None = None,
     overwrite=False,

@@ -849,7 +849,7 @@ def threshold_to_fit(
         n_resid_snips = None
 
     if tmp_dir is None:
-        tmp_dir = computation_cfg.tmpdir_parent
+        tmp_dir = computation_cfg.maybe_tmpdir_parent()
     with TemporaryDirectory(dir=tmp_dir) as temp_dir:
         temp_hdf5_filename = Path(temp_dir) / "subtraction_denoiser0_fit.h5"
         try:

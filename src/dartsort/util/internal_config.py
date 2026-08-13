@@ -895,6 +895,11 @@ class ComputationConfig:
             return False
         return torch.cuda.device_count() > 1
 
+    def maybe_tmpdir_parent(self) -> Path | None:
+        if self.tmpdir_parent is None:
+            return None
+        return ensure_path(self.tmpdir_parent, strict=True)
+
 
 # default configs, used as defaults for kwargs in main.py etc
 default_waveform_cfg = WaveformConfig()
@@ -979,6 +984,13 @@ class DARTsortInternalConfig:
     save_final_features: bool = True
     always_save_detailed_features: bool = False
     save_everything_on_error: bool = False
+
+    def maybe_tmpdir_parent(self) -> Path | None:
+        if self.tmpdir_parent is not None:
+            return ensure_path(self.tmpdir_parent, strict=True)
+        if self.computation_cfg.tmpdir_parent is not None:
+            return ensure_path(self.tmpdir_parent, strict=True)
+        return None
 
 
 def to_internal_config(cfg, n_channels: int) -> DARTsortInternalConfig:
