@@ -1608,6 +1608,7 @@ def candidates_to_labels(clabels, labels, Klabel, Kcand):
 
 def check_recording(
     rec: BaseRecording,
+    copy_flag: bool | None = None,
     threshold=5,
     dedup_spatial_radius=75,
     expected_value_range=1e4,
@@ -1711,14 +1712,15 @@ def check_recording(
     if log and not rec.binary_compatible_with(
         file_offset=0, time_axis=0, file_paths_length=1
     ):
-        warnings.warn(
-            "Your (preprocessed) recording is not saved on disk in time-major "
-            "format, so reading data could be slow. You could set the config "
-            "flag copy_recording_to_tmpdir to keep it in a scratch folder "
-            "while dartsort runs, or cache it long-term with its .save() method.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
+        if copy_flag is not None and not copy_flag:
+            warnings.warn(
+                "Your (preprocessed) recording is not saved on disk in time-major "
+                "format, so reading data could be slow. You could set the config "
+                "flag copy_recording_to_tmpdir to keep it in a scratch folder "
+                "while dartsort runs, or cache it long-term with its .save() method.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
     return failed, avg_detections_per_second, max_abs, std
 

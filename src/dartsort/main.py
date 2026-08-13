@@ -62,6 +62,7 @@ from .util.main_util import (
     ds_save_intermediate_labels,
     ds_save_motion,
     ds_save_timing,
+    ds_will_copy_recording,
     motion_needs_peaks,
 )
 from .util.motion import MotionInfo, get_motion_info
@@ -137,7 +138,7 @@ def dartsort(
 
     # preprocess
     recording = preprocess(recording, cfg.preprocessing, cfg.preprocessing_dtype)
-    check_recording(recording)
+    check_recording(recording, copy_flag=ds_will_copy_recording(cfg))
 
     if cfg.work_in_tmpdir:
         with TemporaryDirectory(
