@@ -860,6 +860,9 @@ class InjectSpikesPreprocessor(BasePreprocessor):
                 for k, (sh, dt) in dataset_shapes.items()
             }
 
+            nt = self.get_num_frames()
+            n_residual_snips = min(n_residual_snips, nt // self.spike_length_samples)
+
             # residual snippets
             if n_residual_snips:
                 nrs_dset = h5.create_dataset(
@@ -883,12 +886,8 @@ class InjectSpikesPreprocessor(BasePreprocessor):
                 nrs_dset = residual = residual_times = None
 
             with Executor(max_workers=n_jobs, mp_context=context) as pool:
-                nt = self.get_num_frames()
                 bs = int(self.sampling_frequency * chunk_len_s)
                 chunk_starts = range(0, nt, bs)
-                n_residual_snips = min(
-                    n_residual_snips, nt // self.spike_length_samples
-                )
                 residual_snips_per_chunk = divide_randomly(
                     n_residual_snips, len(chunk_starts), self.random_seed
                 )
@@ -957,7 +956,12 @@ class InjectSpikesPreprocessor(BasePreprocessor):
                 if residual is not None:
                     assert residual_times is not None
                     assert nrs_dset is not None
-                    assert residual.shape[0] == residual_times.shape[0] == resid_ix
+                    assert residual.shape[0] == residual_times.shape[0], (
+                        f"{residual.shape=} {residual_times.shape=}"
+                    )
+                    assert residual.shape[0] == resid_ix, (
+                        f"{residual.shape=} {resid_ix=}"
+                    )
                     assert nrs_dset[()] == resid_ix
                 assert i1_prev == n
             assert n_injected == n
