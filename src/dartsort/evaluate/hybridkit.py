@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import spikeinterface.core as sc
 import spikeinterface.preprocessing as spre
+from spikeinterface.core.baserecording import BaseRecording
 
 from ..templates import TemplateData
 from ..util.data_util import DARTsortSorting, ensure_path
@@ -146,6 +147,8 @@ def make_hybrid_recording(
         target_recording = target_recording.remove_channels(bcids[0])
     target_recording = spre.scale_to_uV(target_recording)  # ty: ignore[invalid-argument-type]
 
+    motion = update_motion_geom(motion, target_recording)
+
     template_simulator_kwargs = dict(template_simulator_kwargs or {})
     template_simulator_kwargs.setdefault("trough_offset_samples", templates.nbefore)
     template_simulator_kwargs.setdefault("x_align", template_x_align)
@@ -233,3 +236,14 @@ def rescale_templates(
         targ = rg.uniform(*template_peak_range)
         t.templates_array[i] *= targ / pk
     return t
+
+
+def update_motion_geom(motion: MotionInfo, rec: BaseRecording):
+    new_geom = rec.get_channel_locations()
+    if np.array_equal(motion.geom, new_geom):
+        return motion
+    return MotionInfo.from_motion_est(
+        geom=new_geom,
+        dredge_motion_est=motion.dredge_motion_est,
+        si_motion=motion.si_motion,
+    )
