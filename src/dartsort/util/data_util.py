@@ -2251,8 +2251,6 @@ def vacuum_neg_candidate_prob(
             if 0 <= spike_cand[j] < n_units:
                 continue
             rsj = resp[s, j]
-            if rsj == 0:
-                continue
             resp[s, -1] += rsj
             resp[s, j] = 0.0
             loglik[s, j] = -np.inf
