@@ -6,7 +6,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
-from spikeinterface.core import BaseRecording
+from spikeinterface.core import (
+    BaseRecording,
+    get_global_job_kwargs,
+    is_set_global_job_kwargs_set,
+)
 
 from ..util.data_util import DARTsortSorting, load
 from ..util.internal_config import (
@@ -117,6 +121,17 @@ def ds_dump_config(internal_cfg: DARTsortInternalConfig, output_dir: Path):
     logger.info(f"Recorded config to {json_path}.")
 
 
+def ds_will_copy_recording(internal_cfg: DARTsortInternalConfig):
+    if internal_cfg.copy_recording_to_tmpdir == "if_preprocessing":
+        return internal_cfg.preprocessing != "none"
+    elif internal_cfg.copy_recording_to_tmpdir == "yes":
+        return True
+    elif internal_cfg.copy_recording_to_tmpdir == "no":
+        return False
+    else:
+        panic(internal_cfg.copy_recording_to_tmpdir)
+
+
 def ds_all_to_workdir(
     *,
     internal_cfg: DARTsortInternalConfig,
@@ -128,26 +143,41 @@ def ds_all_to_workdir(
     sort_subdir="dartsort",
 ) -> tuple[BaseRecording, Path | None]:
     """Copy stuff to temporary working directory, if there is one."""
-    if work_dir is None:
-        return recording, None
+    copy_rec = ds_will_copy_recording(internal_cfg)
 
-    if internal_cfg.copy_recording_to_tmpdir == "if_preprocessing":
-        copy_rec = internal_cfg.preprocessing != "none"
-    elif internal_cfg.copy_recording_to_tmpdir == "yes":
-        copy_rec = True
-    elif internal_cfg.copy_recording_to_tmpdir == "no":
-        copy_rec = False
-    else:
-        panic(internal_cfg.copy_recording_to_tmpdir)
+    if work_dir is None:
+        assert not internal_cfg.work_in_tmpdir
+        assert not copy_rec
+        return recording, None
 
     if recording is not None and copy_rec:
         rec_dir = work_dir / rec_subdir
-        logger.info(
-            f"Writing recording to {rec_dir}. Parallelism is handled by "
-            "spikeinterface for this part, so use its `set_global_job_kwargs()` "
-            "function if you're waiting around."
-        )
-        recording = recording.save_to_folder(str(rec_dir))
+        si_has_jobs = is_set_global_job_kwargs_set()
+        dart_njobs = internal_cfg.computation_cfg.actual_n_jobs(cpu=True)
+        if si_has_jobs:
+            logger.dartsortdebug(
+                f"Writing recording to {rec_dir} using your spikeinterface "
+                "global job parameters, since they had been set."
+            )
+            job_kw = get_global_job_kwargs()
+        elif dart_njobs > 1:
+            job_kw = get_global_job_kwargs() | dict(n_jobs=dart_njobs)
+            logger.important(
+                f"Writing recording to {rec_dir}. Using dartsort's n_jobs ({dart_njobs}), "
+                "but this step can be controlled independently and with more detail "
+                "by using spikeinterface's set_global_job_kwargs()."
+            )
+        else:
+            logger.important(
+                f"Writing recording to {rec_dir}. This can be slow with no "
+                "parallelism, consider setting n_jobs_cpu or using spikeinterface's "
+                "set_global_job_kwargs() for better control of this step."
+            )
+            job_kw = {}
+        recording = recording.save_to_folder(str(rec_dir), **job_kw)
+
+    if not internal_cfg.work_in_tmpdir:
+        return recording, None
 
     sort_dir = work_dir / sort_subdir
     if overwrite:

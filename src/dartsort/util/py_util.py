@@ -8,7 +8,7 @@ import threading
 from importlib.resources.abc import Traversable
 from pathlib import Path
 from time import perf_counter
-from typing import dataclass_transform, NoReturn
+from typing import NoReturn, dataclass_transform
 
 from pydantic import ConfigDict
 from pydantic.dataclasses import dataclass as pydantic_dataclass
@@ -131,6 +131,13 @@ def ensure_path(
     parents=False,
     resolve=False,
 ) -> Path:
+    """Convert to Path with some normalization
+
+    Parameters
+    ----------
+    strict : bool
+        p must exist, as in pathlib resolve()
+    """
     if p is None:
         raise ValueError("Can't resolve path None.")
     if isinstance(p, Traversable):

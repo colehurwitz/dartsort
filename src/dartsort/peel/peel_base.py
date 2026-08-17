@@ -746,7 +746,7 @@ class BasePeeler(BModule):
         )
 
         if tmp_dir is None:
-            tmp_dir = computation_cfg.tmpdir_parent
+            tmp_dir = computation_cfg.maybe_tmpdir_parent()
 
         with tempfile.TemporaryDirectory(dir=tmp_dir) as temp_dir:
             temp_hdf5_filename = Path(temp_dir) / "peeler_fit.h5"

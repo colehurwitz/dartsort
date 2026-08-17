@@ -2,6 +2,7 @@
 
 import traceback
 from collections.abc import Sequence
+from contextlib import nullcontext
 from importlib.metadata import version
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -137,78 +138,59 @@ def dartsort(
     ds_handle_link_from(cfg, output_dir)
 
     # preprocess
+    copy_rec_flag = ds_will_copy_recording(cfg)
     recording = preprocess(recording, cfg.preprocessing, cfg.preprocessing_dtype)
-    check_recording(recording, copy_flag=ds_will_copy_recording(cfg))
+    check_recording(recording, copy_flag=copy_rec_flag)
 
-    if cfg.work_in_tmpdir:
-        with TemporaryDirectory(
-            prefix="dartsort", dir=cfg.maybe_tmpdir_parent()
-        ) as work_dir:
-            # copy files and possibly recording to temporary directory
-            work_dir = ensure_path(work_dir)
-            logger.dartsortdebug(f"Working in {work_dir}, outputs to {output_dir}.")
-            recording, work_dir = ds_all_to_workdir(
-                internal_cfg=cfg,
-                output_dir=output_dir,
-                work_dir=work_dir,
-                recording=recording,
-                overwrite=overwrite,
-            )
-            assert work_dir is not None
-
-            # run the sorter, with extra error handlers for grabbing stuff from
-            # the temporary directory if user asked for that.
-            try:
-                return _dartsort_impl(
-                    recording=recording,
-                    output_dir=output_dir,
-                    cfg=cfg,
-                    motion=motion,
-                    si_motion=si_motion,
-                    dredge_motion_est=dredge_motion_est,
-                    work_dir=work_dir,
-                    overwrite=overwrite,
-                )
-            except Exception as e:
-                traceback_path = output_dir / "traceback.txt"
-                error_data_path = output_dir / "error_state"
-                with traceback_path.open("w") as f:
-                    traceback.print_exception(e, file=f)
-                logger.exception(e)
-                if cfg.save_everything_on_error:
-                    logger.critical(
-                        f"Hit an error. Copying outputs to {error_data_path} "
-                        f"and writing traceback to {traceback_path}."
-                    )
-                    dartcopytree(cfg, work_dir, error_data_path)
-                else:
-                    logger.critical(
-                        f"Hit an error. Writing traceback to {traceback_path}."
-                        " work_in_tmpdir was true, so the files won't be kept."
-                        " Set save_everything_on_error to keep them."
-                    )
-                raise
-
-    # run the sorter regular with no tempdir, log exception to a
-    # traceback file in case of a crash for debugging
-    try:
-        return _dartsort_impl(
-            recording=recording,
+    needs_dir = copy_rec_flag or cfg.work_in_tmpdir
+    with (
+        TemporaryDirectory(prefix="dartsort", dir=cfg.maybe_tmpdir_parent())
+        if needs_dir
+        else nullcontext()
+    ) as work_dir:
+        # copy files and possibly recording to temporary directory
+        work_dir = ensure_path(work_dir) if needs_dir else None
+        logger.dartsortdebug(f"Working in {work_dir}, outputs to {output_dir}.")
+        recording, work_dir = ds_all_to_workdir(
+            internal_cfg=cfg,
             output_dir=output_dir,
-            cfg=cfg,
-            motion=motion,
-            si_motion=si_motion,
-            dredge_motion_est=dredge_motion_est,
-            work_dir=None,
+            work_dir=work_dir,
+            recording=recording,
             overwrite=overwrite,
         )
-    except Exception as e:
-        traceback_path = output_dir / "traceback.txt"
-        with traceback_path.open("w") as f:
-            traceback.print_exception(e, file=f)
-        logger.exception(e)
-        logger.critical(f"Hit an error. Wrote traceback to {traceback_path}.")
-        raise
+
+        # run the sorter, with extra error handlers for grabbing stuff from
+        # the temporary directory if user asked for that.
+        try:
+            return _dartsort_impl(
+                recording=recording,
+                output_dir=output_dir,
+                cfg=cfg,
+                motion=motion,
+                si_motion=si_motion,
+                dredge_motion_est=dredge_motion_est,
+                work_dir=work_dir,
+                overwrite=overwrite,
+            )
+        except Exception as e:
+            traceback_path = output_dir / "traceback.txt"
+            error_data_path = output_dir / "error_state"
+            with traceback_path.open("w") as f:
+                traceback.print_exception(e, file=f)
+            logger.exception(e)
+            if cfg.save_everything_on_error:
+                logger.critical(
+                    f"Hit an error. Copying outputs to {error_data_path} "
+                    f"and writing traceback to {traceback_path}."
+                )
+                dartcopytree(cfg, work_dir, error_data_path)
+            else:
+                logger.critical(
+                    f"Hit an error. Writing traceback to {traceback_path}."
+                    " work_in_tmpdir was true, so the files won't be kept."
+                    " Set save_everything_on_error to keep them."
+                )
+            raise
 
 
 def _dartsort_impl(
