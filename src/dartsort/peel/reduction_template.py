@@ -18,7 +18,6 @@ from ..transform.temporal_pca import FullProbeTemporalPCAEmbedder
 from ..transform.whiten import WaveformWhitener
 from ..util.data_util import (
     DARTsortSorting,
-    get_top_assignment_weights,
     subsample_by_count_and_valid_time,
 )
 from ..util.internal_config import (
@@ -340,9 +339,6 @@ class TemplateReduction(GrabAndFeaturize):
         # grab weights and labels for fixed_properties
         assert sorting.labels is not None
         fixed_properties = {"labels": sorting.labels, "channels": sorting.channels}
-        if template_cfg.weighted:
-            weights = get_top_assignment_weights(sorting)
-            fixed_properties["template_weights"] = weights
         if (c := getattr(sorting, "alignment_signs", None)) is not None:
             fixed_properties["alignment_signs"] = c
         else:

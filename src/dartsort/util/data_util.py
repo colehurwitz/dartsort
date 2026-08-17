@@ -1440,15 +1440,6 @@ def sorting_isis(sorting: DARTsortSorting):
     return isis_ms
 
 
-def get_top_assignment_weights(
-    sorting: DARTsortSorting,
-    responsibilities_key="gmm_responsibilities",
-    candidates_key="gmm_candidates",
-) -> np.ndarray:
-    assert sorting.labels is not None
-    raise NotImplementedError  # TODO
-
-
 def merged_responsibilities(
     sorting: DARTsortSorting,
     responsibilities_key="gmm_responsibilities",

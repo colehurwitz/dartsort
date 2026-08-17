@@ -363,7 +363,6 @@ class TemplateConfig:
         | str
     ) = "peelreduce"
     denoising_method: Literal["none", "exp_weighted", "svd"] = "svd"
-    weighted: bool = False
     grab_chunk_length_samples: int = 30_000
     units_per_job: int = 8
     whitening: WhiteningConfig = WhiteningConfig()
