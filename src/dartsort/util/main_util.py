@@ -6,11 +6,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
 
 import numpy as np
-from spikeinterface.core import (
-    BaseRecording,
-    get_global_job_kwargs,
-    is_set_global_job_kwargs_set,
-)
+from spikeinterface.core import BaseRecording, get_global_job_kwargs
+from spikeinterface.core.globals import is_set_global_job_kwargs_set
 
 from ..util.data_util import DARTsortSorting, load
 from ..util.internal_config import (
