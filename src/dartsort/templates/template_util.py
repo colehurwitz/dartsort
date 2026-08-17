@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 
 def weighted_average(unit_ids, templates, weights):
     n_out = unit_ids.max() + 1
-    n_in, t, c = templates.shape
+    _n_in, t, c = templates.shape
     out = np.zeros((n_out, t, c), dtype=templates.dtype)
     weights = weights.astype(float)
     for i in range(n_out):
@@ -128,7 +128,7 @@ class LowRankTemplates:
 
         for j in range(-nlow, nhigh + 1):
             gshift = geom + [0, j * pitch]
-            d, regchans = rgkdt.query(gshift)
+            _d, regchans = rgkdt.query(gshift)
             assert np.all(regchans < rgkdt.n)
 
             spatial = spatial_components[:, :, regchans]

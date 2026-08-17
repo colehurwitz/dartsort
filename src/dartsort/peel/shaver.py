@@ -151,7 +151,7 @@ class Shaver(BasePeeler):
             return peeling_empty_result
 
         # get absolute times
-        times_rel = res.pop("times_rel")
+        times_rel = res.pop("times_rel")  # ty: ignore[call-non-callable]
         assert times_rel is not None
         res["times_samples"] = times_rel + chunk_start_samples
         assert "waveforms" in res

@@ -31,7 +31,7 @@ from ..util.job_util import ensure_computation_config
 from ..util.logging_util import get_logger
 from ..util.motion import MotionInfo
 from ..util.noise_util import Whitener
-from ..util.py_util import ensure_path
+from ..util.py_util import ensure_path, panic
 from ..util.waveform_util import full_channel_index
 from .grab import GrabAndFeaturize
 
@@ -143,7 +143,7 @@ class ReductionTemplateData(TemplateData):
             )
             templates = weights * raw_mean + (1 - weights) * svd_mean
         else:
-            assert False
+            panic(template_cfg.denoising_method)
 
         spike_counts = count.max(axis=1)
         if motion.drifting:
@@ -390,13 +390,13 @@ class TemplateReduction(GrabAndFeaturize):
             elif len(reducers) == 1:
                 svd_f = None
             else:
-                assert False
+                panic(len(reducers))
         elif reducers[0].name_prefix == "svd":
             assert len(reducers) == 1
             raw_f = None
             svd_f = reducers[0]
         else:
-            assert False
+            panic(reducers[0].name_prefix)
 
         if raw_f is not None:
             counts, raw_mean, raw_std = raw_f.reduction_results(

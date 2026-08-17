@@ -1207,7 +1207,7 @@ try:
     class PeelingBatchResult(TypedDict, extra_items=torch.Tensor):  # ty: ignore[unknown-argument]
         n_spikes: int
 except TypeError:
-    PeelingBatchResult = dict  # type: ignore
+    PeelingBatchResult = dict[str, int | torch.Tensor]
 
 
 peeling_empty_result = PeelingBatchResult(n_spikes=0)

@@ -24,7 +24,7 @@ from ..util.data_util import DARTsortSorting
 from ..util.internal_config import ComputationConfig, unshifted_raw_template_cfg
 from ..util.logging_util import progbar
 from ..util.motion import MotionInfo
-from ..util.py_util import ensure_path
+from ..util.py_util import ensure_path, panic
 from . import analysis, comparison, simkit
 
 logger = getLogger(__name__)
@@ -534,7 +534,7 @@ def load_dartsort_step_sortings(
             elif npx.name.endswith(".npz"):
                 yield (name_formatter(stem), DARTsortSorting.load(npx))
             else:
-                assert False
+                panic(npx.name)
 
     if no_npys and dartsort_sorting_npz.exists():
         yield "dartsort", DARTsortSorting.load(dartsort_sorting_npz)

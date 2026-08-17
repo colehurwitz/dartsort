@@ -1,6 +1,5 @@
 """A simple residual updating template matcher."""
 
-from pathlib import Path
 from typing import Self
 
 import numpy as np
@@ -288,7 +287,7 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
 
         # process spike times and create return result
         if match_results["n_spikes"]:
-            match_results["times_samples"] += chunk_start_samples - left_margin
+            match_results["times_samples"] += chunk_start_samples - left_margin  # ty: ignore[invalid-assignment]
         if match_results["n_spikes"] > self.p.max_spikes_per_second:
             raise ValueError(
                 f"Too many spikes {match_results['n_spikes']} > {self.p.max_spikes_per_second}."

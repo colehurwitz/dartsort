@@ -165,7 +165,7 @@ def test_exact_injections(tmp_path, globally_refractory, noise_kind):
         sim["templates"].templates, simple_template_library, atol=1e-5
     )
     assert not sim["motion"].drifting
-    u, c = np.unique(st.labels, return_counts=True)
+    _, c = np.unique(st.labels, return_counts=True)
     np.testing.assert_equal(c, sim["unit_info_df"].gt_spike_count.values)
     np.testing.assert_allclose(
         st.ptp_amplitudes, 1.0 + st.labels.astype(f_dt), atol=1e-5

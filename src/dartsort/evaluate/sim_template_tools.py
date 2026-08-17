@@ -397,7 +397,7 @@ class TemplateLibrarySimulator(BaseTemplateSimulator):
         self.pos_local = pos_local
 
         self.interp_method = interp_method
-        if interp_method == "dart":  # noqa: SIM114
+        if interp_method == "dart":
             self.grid_avg_offsets = np.zeros(1)
         elif interp_method == "grid_sample":
             self.grid_avg_offsets = np.zeros(1)

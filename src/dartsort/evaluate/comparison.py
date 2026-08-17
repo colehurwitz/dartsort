@@ -596,7 +596,7 @@ class DARTsortGroundTruthComparison:
             gt_times_ms = self.gt_analysis.sorting.times_samples[in_gt] * to_ms
             tested_times_ms = self.tested_analysis.sorting.times_samples[in_tu] * to_ms
             gt_kdt = KDTree(gt_times_ms[:, None])
-            dd, ii = gt_kdt.query(
+            _dd, ii = gt_kdt.query(
                 tested_times_ms[:, None], distance_upper_bound=self.delta_time
             )
             ii = np.atleast_1d(ii)

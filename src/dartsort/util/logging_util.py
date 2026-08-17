@@ -71,7 +71,7 @@ def set_log_level(level: int | str):
     elif isinstance(level, int):
         ilevel = level
     else:
-        assert False
+        raise TypeError(f"Can't handle {level} ({type(level)})")
     package_logger.setLevel(ilevel)
     package_logger.log(ilevel, f"Log level set to {level}.")
 
@@ -116,7 +116,7 @@ package_logger.dartsortdebug(
 )
 
 
-class logress:
+class logress:  # noqa: N801
     def __init__(
         self,
         iterable,

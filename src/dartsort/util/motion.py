@@ -240,7 +240,7 @@ class MotionInfo:
         if not self.drifting:
             return False
         if self.dredge_motion_est is not None:
-            if not hasattr(self.dredge_motion_est, "spatial_bin_centers_um"):  # noqa: SIM114
+            if not hasattr(self.dredge_motion_est, "spatial_bin_centers_um"):
                 return False
             elif self.dredge_motion_est.spatial_bin_centers_um is None:
                 return False

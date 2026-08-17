@@ -44,7 +44,7 @@ def databag(*args, slots=True, kw_only=True, eq=False, repr=False, **kwargs):
 _timer_stack = []
 
 
-class timer:
+class timer:  # noqa: N801
     """
     with timer("hi"):
         bubblesort(np.arange(1e6)[::-1])
@@ -74,7 +74,6 @@ class timer:
             self.results_dict[self.name] = self.dt
 
     def __enter__(self):
-        global _timer_stack
         if len(_timer_stack):
             self.parent = _timer_stack[-1]
             if self.results_dict is None:
@@ -84,7 +83,6 @@ class timer:
         return self
 
     def __exit__(self, *args):
-        global _timer_stack
         self.stop()
         assert _timer_stack.pop() is self
         self.parent = None
@@ -164,7 +162,7 @@ def dartcopy2(icfg, src, dest):
     elif icfg.workdir_copier == "rsync":
         _rsync(src, dest, archive=False, follow_symlinks=icfg.workdir_follow_symlinks)
     else:
-        assert False
+        panic(icfg.workdir_copier)
 
 
 def dartcopytree(icfg, src, dest):
@@ -184,7 +182,7 @@ def dartcopytree(icfg, src, dest):
                 follow_symlinks=icfg.workdir_follow_symlinks,
             )
         else:
-            assert False
+            panic(icfg.workdir_copier)
     except shutil.SameFileError:
         logger.dartsortdebug(
             f"Skip dartcopytree {src} -> {dest} since shutil says they're the same."
@@ -218,7 +216,7 @@ def _rsync(src, dest, archive=True, follow_symlinks=False, excludes=None, vp=Fal
     cmd = ["rsync", *archive_flags, *link_flags, *exclude_flags, str(src), str(dest)]
     if vp:
         logger.info(" ".join(cmd))
-    res = subprocess.run(cmd)
+    res = subprocess.run(cmd, check=True)
     assert not res.returncode
 
 
