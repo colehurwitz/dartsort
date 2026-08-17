@@ -296,8 +296,8 @@ class DARTsortGroundTruthComparison:
     def relevant_tested_units(self, gt_unit_id: int | None = None, threshold=0.05):
         if gt_unit_id is None:
             tested_units = set()
-            for gt_unit_id in self.gt_analysis.unit_ids:
-                tested_units.update(self.relevant_tested_units(gt_unit_id=gt_unit_id))
+            for uu in self.gt_analysis.unit_ids:
+                tested_units.update(self.relevant_tested_units(gt_unit_id=uu))
             return tested_units
         ag = self.agreement_scores.loc[gt_unit_id]
         return ag.index[ag.array >= threshold]
@@ -741,7 +741,7 @@ class DARTsortGTVersus:
         self.other_analyses = other_analyses
         self.other_names = [oa.name for oa in other_analyses]
         self.other_templates = [
-            (oa.name or f"Test{c}") for oa, c in zip(other_analyses, self.default_ids)
+            (oa.name or f"Test{c}") for oa, c in zip(other_analyses, self.default_ids, strict=True)
         ]
         self.other_sortings = [oa.sorting for oa in other_analyses]
 
@@ -751,7 +751,7 @@ class DARTsortGTVersus:
             assert len(comparisons) == self.n_vs
 
         self.cmps = []
-        for cmp, oa in zip(comparisons, other_analyses):
+        for cmp, oa in zip(comparisons, other_analyses, strict=True):
             if cmp is not None:
                 assert cmp.tested_analysis.name == oa.name
             else:
@@ -773,7 +773,7 @@ class DARTsortGTVersus:
         if self._unit_vs_df is not None:
             return self._unit_vs_df.copy(deep=True)
         dfs = [ocmp.unit_info_dataframe().reset_index() for ocmp in self.cmps]
-        for df, sorter in zip(dfs, self.other_names):
+        for df, sorter in zip(dfs, self.other_names, strict=True):
             df[self.sorter_var] = sorter
         self._unit_vs_df = pd.concat(dfs, axis=0)
         return self._unit_vs_df.copy(deep=True)
