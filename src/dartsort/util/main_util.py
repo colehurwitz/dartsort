@@ -198,6 +198,12 @@ def ds_save_motion(
     motion.save(output_directory=output_dir, overwrite=overwrite)
 
 
+def ds_check_motion(rec: BaseRecording, motion: "MotionInfo"):
+    assert motion.geom.shape[0] == rec.get_num_channels()
+    np.testing.assert_allclose(motion.geom, rec.get_channel_locations())
+    assert motion.rgeom.shape[0] >= motion.geom.shape[0]
+
+
 def motion_needs_peaks(
     cfg: DARTsortInternalConfig, recording: BaseRecording, sorting: DARTsortSorting
 ):

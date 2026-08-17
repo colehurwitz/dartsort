@@ -54,6 +54,7 @@ from .util.main_util import (
     DARTsortResult,
     _matching_step_cfgs,
     ds_all_to_workdir,
+    ds_check_motion,
     ds_dump_config,
     ds_fast_forward,
     ds_handle_delete_intermediate_features,
@@ -217,9 +218,11 @@ def _dartsort_impl(
     # TODO uhh. overwrite, right?
     next_step, sorting, _motion = ds_fast_forward(store_dir, cfg)
     if motion is not None:
-        pass
+        ds_check_motion(recording, motion)
     elif (si_motion is None) and (dredge_motion_est is None):
         motion = _motion
+        if motion is not None:
+            ds_check_motion(recording, motion)
     else:
         motion = MotionInfo.from_motion_est(
             geom=recording.get_channel_locations(),
