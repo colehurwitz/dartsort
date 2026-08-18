@@ -1,19 +1,18 @@
 """A good integration test of a few pieces"""
 
-from typing import cast
-
 import tempfile
 from pathlib import Path
+from typing import cast
 
 import h5py
 import numpy as np
 import spikeinterface.core as sc
 import torch
+
 from dartsort import transform
 from dartsort.peel.grab import GrabAndFeaturize
+from dartsort.util.internal_config import ComputationConfig, WaveformConfig
 from dartsort.util.waveform_util import make_channel_index
-from dartsort.util.internal_config import ComputationConfig, WaveformConfig, FitSamplingConfig
-
 
 two_jobs_cfg = ComputationConfig(n_jobs_cpu=2, n_jobs_gpu=2)
 
