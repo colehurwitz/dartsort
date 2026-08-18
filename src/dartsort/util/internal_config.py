@@ -1,10 +1,10 @@
+import math
 from collections.abc import Sequence
 from dataclasses import asdict, fields, replace
 from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Literal, Self
 
-import numpy as np
 import torch
 
 from .cli_util import argfield, dataclass_from_toml
@@ -43,11 +43,9 @@ class WaveformConfig:
         samples_after: int,
         sampling_frequency: float = 30_000.0,
     ) -> Self:
-        sampling_frequency = float(sampling_frequency)
-        samples_per_ms = sampling_frequency / 1000
         self = cls(
-            ms_before=samples_before / samples_per_ms,
-            ms_after=samples_after / samples_per_ms,
+            ms_before=cls.samples_to_ms(samples_before, sampling_frequency),
+            ms_after=cls.samples_to_ms(samples_after, sampling_frequency),
         )
         assert self.trough_offset_samples(sampling_frequency) == samples_before
         samples_total = samples_before + samples_after
@@ -57,23 +55,23 @@ class WaveformConfig:
         return self
 
     @staticmethod
-    def ms_to_samples(ms, sampling_frequency: float = 30_000.0):
-        if ms > sampling_frequency:
-            return int((ms / 1000.0) * sampling_frequency)
-        else:
-            return int(ms * (sampling_frequency / 1000.0))
+    def ms_to_samples(ms, sampling_frequency: float = 30_000.0) -> int:
+        n_samples = float(ms) * float(sampling_frequency) / 1000.0
+        return math.floor(n_samples + 0.5)
+
+    @staticmethod
+    def samples_to_ms(n_samples: int, sampling_frequency: float = 30_000.0) -> float:
+        return 1000.0 * n_samples / float(sampling_frequency)
 
     def length_ms(self):
         return self.ms_before + self.ms_after
 
-    def trough_offset_samples(self, sampling_frequency: float = 30_000.0):
-        sampling_frequency = np.round(sampling_frequency)
+    def trough_offset_samples(self, sampling_frequency: float = 30_000.0) -> int:
         return self.ms_to_samples(self.ms_before, sampling_frequency=sampling_frequency)
 
-    def spike_length_samples(self, sampling_frequency: float = 30_000.0):
-        spike_len_ms = self.ms_before + self.ms_after
-        sampling_frequency = np.round(sampling_frequency)
-        length = self.ms_to_samples(spike_len_ms, sampling_frequency=sampling_frequency)
+    def spike_length_samples(self, sampling_frequency: float = 30_000.0) -> int:
+        length_ms = self.length_ms()
+        length = self.ms_to_samples(length_ms, sampling_frequency=sampling_frequency)
         # odd is better for convolution arithmetic elsewhere
         length = 2 * (length // 2) + 1
         return length
