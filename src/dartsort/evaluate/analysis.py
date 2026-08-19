@@ -39,11 +39,12 @@ from ..util.internal_config import (
 )
 from ..util.interpolation_util import StableFeaturesInterpolator, pad_geom
 from ..util.motion import MotionInfo
-from ..util.py_util import databag
+from ..util.py_util import databag, panic
 from ..util.spikeio import read_waveforms_channel_index
 from ..util.waveform_util import make_channel_index
 
 logger = logging_util.get_logger(__name__)
+vis_distance_merge_cfg = TemplateMergeConfig(min_spatial_cosine=0.8)
 
 
 @dataclass
@@ -94,9 +95,7 @@ class DARTsortAnalysis:
         name: str | None = None,
         template_data: TemplateData | None = None,
         template_cfg: TemplateConfig | None = raw_template_cfg,
-        template_merge_cfg: TemplateMergeConfig = TemplateMergeConfig(
-            min_spatial_cosine=0.8
-        ),
+        template_merge_cfg: TemplateMergeConfig = vis_distance_merge_cfg,
         clustering_features_cfg: ClusteringFeaturesConfig = default_clustering_features_cfg,
         computation_cfg: ComputationConfig | None = None,
         allow_qda: bool = True,
@@ -355,8 +354,8 @@ class DARTsortAnalysis:
         if unit_id is not None:
             return np.ptp(self.template_data.unit_templates(unit_id))
         amplitudes = np.zeros(self.sorting.unit_ids.shape)
-        for j, unit_id in enumerate(self.sorting.unit_ids):
-            temps = self.template_data.unit_templates(unit_id)
+        for j, u in enumerate(self.sorting.unit_ids):
+            temps = self.template_data.unit_templates(u)
             amplitudes[j] = np.ptp(np.nan_to_num(temps))
         return amplitudes
 
@@ -413,7 +412,7 @@ class DARTsortAnalysis:
         elif unit_id is not None:
             which = self.in_unit(unit_id)
         else:
-            assert False
+            panic()
 
         if max_count is not None and which.size > max_count:
             rg = np.random.default_rng(random_seed)
@@ -507,7 +506,7 @@ class DARTsortAnalysis:
         elif unit_id is not None:
             which = self.in_unit(unit_id)
         else:
-            assert False
+            panic()
 
         if max_count is not None and which.size > max_count:
             rg = np.random.default_rng(random_seed)
