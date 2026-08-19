@@ -103,7 +103,9 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
         self.inv_lambda = (
             1.0 / p.amplitude_scaling_variance if self.is_scaling else float("inf")
         )
-        self.is_free_scaling = self.inv_lambda == 0 and p.amplitude_scaling_boundary > 1e6
+        self.is_free_scaling = (
+            self.inv_lambda == 0 and p.amplitude_scaling_boundary > 1e6
+        )
         self.amp_scale_max = 1.0 + p.amplitude_scaling_boundary
         self.amp_scale_min = 1.0 / self.amp_scale_max
         self.whiten_pad = max(0, whiten_kernel_length - 1)
@@ -287,7 +289,7 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
 
         # process spike times and create return result
         if match_results["n_spikes"]:
-            match_results["times_samples"] += chunk_start_samples - left_margin  # ty: ignore[invalid-assignment]
+            match_results["times_samples"] += chunk_start_samples - left_margin
         if match_results["n_spikes"] > self.p.max_spikes_per_second:
             raise ValueError(
                 f"Too many spikes {match_results['n_spikes']} > {self.p.max_spikes_per_second}."
