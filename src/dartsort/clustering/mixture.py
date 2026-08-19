@@ -5855,31 +5855,40 @@ def _noise_factors(*, noise, obs_ix, miss_near_ix, cache_prefix):
         jmnixv = jmnix[jmnixvix]
         ncoi = joixv.numel()
         ncmi = jmnixv.numel()
+        assert ncoi > 0
 
+        # -- observed-only stuff
+        # calculate observed-only stuff
         jCoo = noise.marginal_covariance(
             channels=joixv, cache_prefix=cache_prefix, cache_key=j
         )
-        jCom = noise.offdiag_covariance(
-            channels_left=joixv, channels_right=jmnixv, device=dev
-        )
-        jCom = jCom.to_dense().to(device=dev)
-
         jL = jCoo.cholesky(upper=False)  # C = LL'
         jLinv = jL.inverse().to_dense()
         jCooinv = jLinv.T @ jLinv  # Cinv = Linv' Linv
         jlogdet = 2.0 * jL.to_dense().diagonal(dim1=-2, dim2=-1).log().sum()
-        jCooinvCom = jCooinv @ jCom
 
+        # set observed-only stuff
         logdet[j] = jlogdet
         # fancy inds to front! love that.
         jCooinv = jCooinv.view(rank, ncoi, rank, ncoi)
         Cooinv[j, :, joixvix[:, None], :, joixvix[None]] = jCooinv.permute(1, 3, 0, 2)
+        jLinv = jLinv.view(rank, ncoi, rank, ncoi)
+        Linv[j, :, joixvix[:, None], :, joixvix[None]] = jLinv.permute(1, 3, 0, 2)
+
+        # -- observed-missing stuff
+        if ncmi == 0:
+            # i am a lonely island
+            # importantly, that means my Com is 0. so everything is 0 below.
+            continue
+        jCom = noise.offdiag_covariance(
+            channels_left=joixv, channels_right=jmnixv, device=dev
+        )
+        jCom = jCom.to_dense().to(device=dev)
+        jCooinvCom = jCooinv @ jCom
         jCooinvCom = jCooinvCom.view(rank, ncoi, rank, ncmi)
         CooinvCom[j, :, joixvix[:, None], :, jmnixvix[None]] = jCooinvCom.permute(
             1, 3, 0, 2
         )
-        jLinv = jLinv.view(rank, ncoi, rank, ncoi)
-        Linv[j, :, joixvix[:, None], :, joixvix[None]] = jLinv.permute(1, 3, 0, 2)
 
     obsdim = rank * nc_obs
     missdim = rank * nc_miss_near
