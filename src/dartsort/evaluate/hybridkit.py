@@ -1,5 +1,6 @@
 import json
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -14,6 +15,7 @@ from ..util.data_util import DARTsortSorting, ensure_path
 from ..util.job_util import ensure_computation_config
 from ..util.motion import MotionInfo, resample_motion
 from ..util.py_util import databag
+from .analysis import DARTsortAnalysis
 from .sim_template_tools import TemplateLibrarySimulator, get_template_simulator
 from .simlib import InjectSpikesPreprocessor
 
@@ -27,6 +29,28 @@ class HybridDataset:
     recording: sc.BaseRecording
     motion: MotionInfo
     metadata: dict[str, Any]
+
+    def gt_analysis(
+        self, trough_offset: int = 42, spike_length: int = 121
+    ) -> DARTsortAnalysis:
+        if spike_length != self.gt_templates.spike_length_samples:
+            i0 = self.gt_templates.trough_offset_samples - trough_offset
+            assert i0 >= 0
+            template_data = replace(
+                self.gt_templates,
+                templates=self.gt_templates.templates[:, i0 : i0 + spike_length],
+                trough_offset_samples=trough_offset,
+            )
+        else:
+            assert trough_offset == self.gt_templates.spike_length_samples
+            template_data = self.gt_templates
+        return DARTsortAnalysis.from_sorting(
+            recording=self.recording,
+            sorting=self.gt_sorting,
+            template_data=template_data,
+            motion=self.motion,
+            name="GT",
+        )
 
 
 def load_hybrid_recording(folder: str | Path) -> HybridDataset | None:

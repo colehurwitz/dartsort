@@ -188,7 +188,7 @@ def get_smoothed_density_ratio(
     else:
         dens_ = dens[0]
         dens_ /= dens[1]
-        np.nan_to_num(dens_, out=dens_)  # type: ignore
+        np.nan_to_num(dens_, out=dens_, posinf=np.inf, neginf=-np.inf)  # type: ignore
         return dens_
 
 
@@ -407,7 +407,7 @@ def kdt_density(
             desc=f"KDTdens[{n_jobs}]",
         ):
             density[i0:i1] = dens
-    np.nan_to_num(density, copy=False)
+    np.nan_to_num(density, posinf=np.inf, neginf=-np.inf, copy=False)
     return density
 
 

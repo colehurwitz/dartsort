@@ -136,7 +136,7 @@ class DARTsortAnalysis:
                 tpca = get_tpca(
                     sorting, featurization_pipeline_pt=featurization_pipeline_pt
                 )
-            except ValueError:
+            except (ValueError, FileNotFoundError):
                 tpca = None
         else:
             tpca = None

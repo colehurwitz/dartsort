@@ -76,7 +76,12 @@ from .util.logging_util import (
     get_logger,
     set_log_level,
 )
-from .util.motion import MotionInfo, get_motion_info, try_load_motion_info
+from .util.motion import (
+    MotionInfo,
+    detect_for_motion,
+    get_motion_info,
+    try_load_motion_info,
+)
 from .util.noise_util import EmbeddedNoise
 from .util.preprocess_util import preprocess
 from .util.py_util import databag, ensure_path

@@ -259,7 +259,9 @@ class DARTsortGroundTruthComparison:
         except ValueError:
             pass
         if self.has_templates and (force_distances or self.compute_distances):
-            dist = np.nan_to_num(self.template_distances, nan=np.inf).min(axis=1)
+            dist = np.nan_to_num(
+                self.template_distances, nan=np.inf, posinf=np.inf, neginf=-np.inf
+            ).min(axis=1)
             df["min_temp_dist"] = dist
         rec = []
         for uid in df.index:
@@ -334,7 +336,9 @@ class DARTsortGroundTruthComparison:
                 if udt.size:
                     match_dt_rms[j] = np.sqrt(np.square(udt).mean())
             except ValueError as e:
-                warnings.warn(f"ValueError in misalignment. SI matching bug. {e=}", stacklevel=2)
+                warnings.warn(
+                    f"ValueError in misalignment. SI matching bug. {e=}", stacklevel=2
+                )
         return match_dt_rms
 
     def matched_misalignment(self, gt_unit_id):
@@ -477,7 +481,8 @@ class DARTsortGroundTruthComparison:
                 warnings.warn(
                     f"Strange match sizes for {gt_unit=} {tested_unit=}: "
                     f"{matched_gt_indices.shape=} {matched_tested_indices.shape=} "
-                    f"{matched_tested_mask.sum()=}", stacklevel=2
+                    f"{matched_tested_mask.sum()=}",
+                    stacklevel=2,
                 )
         else:
             matched_tested_indices = np.zeros(shape=(0,), dtype=np.int64)
@@ -741,7 +746,8 @@ class DARTsortGTVersus:
         self.other_analyses = other_analyses
         self.other_names = [oa.name for oa in other_analyses]
         self.other_templates = [
-            (oa.name or f"Test{c}") for oa, c in zip(other_analyses, self.default_ids, strict=True)
+            (oa.name or f"Test{c}")
+            for oa, c in zip(other_analyses, self.default_ids, strict=True)
         ]
         self.other_sortings = [oa.sorting for oa in other_analyses]
 

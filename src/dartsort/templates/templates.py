@@ -1,7 +1,7 @@
 import gc
 from dataclasses import replace
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Self
 
 import numpy as np
 import torch
@@ -83,19 +83,19 @@ class TemplateData:
                 assert v.shape[0] == ntemp
 
     @property
-    def spike_length_samples(self):
+    def spike_length_samples(self) -> int:
         return self.templates.shape[1]
 
-    def snrs_by_channel(self):
+    def snrs_by_channel(self) -> np.ndarray:
         amp_vecs = np.nan_to_num(np.ptp(self.templates, axis=1), nan=-np.inf)
         if self.spike_counts_by_channel is not None:
             amp_vecs *= np.sqrt(self.spike_counts_by_channel)
         return amp_vecs
 
-    def main_channels(self):
+    def main_channels(self) -> np.ndarray:
         return self.snrs_by_channel().argmax(axis=1)
 
-    def template_locations(self, mode="channel", radius=100.0):
+    def template_locations(self, mode="channel", radius=100.0) -> np.ndarray:
         assert mode in ("localization", "channel")
 
         if mode == "channel":
@@ -112,11 +112,11 @@ class TemplateData:
         rdepths = np.c_[rdepths["x"], rdepths["z_abs"]]
         return rdepths
 
-    def registered_depths_um(self, mode="channel", radius=100.0):
+    def registered_depths_um(self, mode="channel", radius=100.0) -> np.ndarray:
         return self.template_locations(mode=mode, radius=radius)[:, 1]
 
     @classmethod
-    def from_npz(cls, npz_path):
+    def from_npz(cls, npz_path) -> Self:
         with np.load(npz_path, allow_pickle=True) as data:
             data = dict(**data)
             data["whiten_strategy"] = str(data["whiten_strategy"])
@@ -182,7 +182,7 @@ class TemplateData:
                 to_save[f"__prop_{k}"] = p
         np.savez(npz_path, **to_save)  # type: ignore
 
-    def __getitem__(self, subset):
+    def __getitem__(self, subset) -> Self:
         if not np.array_equal(self.unit_ids, np.arange(len(self.unit_ids))):
             subset_ixs = np.searchsorted(self.unit_ids, subset, side="right") - 1
             matched = self.unit_ids[subset_ixs] == subset
@@ -212,7 +212,7 @@ class TemplateData:
             whiten_strategy=self.whiten_strategy,
         )
 
-    def coarsen(self):
+    def coarsen(self) -> Self:
         """Weighted average all templates that share a unit id."""
         # update templates
         unit_ids_unique, flat_ids = np.unique(self.unit_ids, return_inverse=True)
@@ -231,10 +231,10 @@ class TemplateData:
             tsvd=self.tsvd,
         )
 
-    def unit_mask(self, unit_id):
+    def unit_mask(self, unit_id) -> np.ndarray:
         return np.isin(self.unit_ids, unit_id)
 
-    def unit_templates(self, unit_id):
+    def unit_templates(self, unit_id) -> np.ndarray:
         return self.templates[self.unit_mask(unit_id)]
 
     def __init_subclass__(cls):
@@ -258,7 +258,7 @@ class TemplateData:
         featurization_basis=None,
         computation_cfg: ComputationConfig | None = None,
         show_progress: bool = True,
-    ) -> "TemplateData":
+    ) -> Self:
         # load if saved already and not overwriting
         if save_folder is not None:
             save_folder = Path(save_folder)
@@ -326,7 +326,7 @@ class TemplateData:
         whitener: Whitener | None = None,
         tsvd=None,
         computation_cfg: ComputationConfig | None = None,
-    ) -> "TemplateData":
+    ) -> Self:
         raise NotImplementedError
 
 
@@ -353,4 +353,4 @@ def _try_reload_svd(
         logger.dartsortdebug(f"Reloading TSVD from {tnpz}")
     else:
         logger.dartsortdebug(f"No TSVD to reload in {tnpz}")
-    return tsvd
+    return tsvd  # ty: ignore[invalid-return-type]
