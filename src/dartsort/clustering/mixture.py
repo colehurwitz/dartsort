@@ -5870,10 +5870,10 @@ def _noise_factors(*, noise, obs_ix, miss_near_ix, cache_prefix):
         # set observed-only stuff
         logdet[j] = jlogdet
         # fancy inds to front! love that.
-        jCooinv = jCooinv.view(rank, ncoi, rank, ncoi)
-        Cooinv[j, :, joixvix[:, None], :, joixvix[None]] = jCooinv.permute(1, 3, 0, 2)
-        jLinv = jLinv.view(rank, ncoi, rank, ncoi)
-        Linv[j, :, joixvix[:, None], :, joixvix[None]] = jLinv.permute(1, 3, 0, 2)
+        jCooinv_out = jCooinv.view(rank, ncoi, rank, ncoi).permute(1, 3, 0, 2)
+        Cooinv[j, :, joixvix[:, None], :, joixvix[None]] = jCooinv_out
+        jLinv_out = jLinv.view(rank, ncoi, rank, ncoi).permute(1, 3, 0, 2)
+        Linv[j, :, joixvix[:, None], :, joixvix[None]] = jLinv_out
 
         # -- observed-missing stuff
         if ncmi == 0:
