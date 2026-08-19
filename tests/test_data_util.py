@@ -62,7 +62,7 @@ def test_check_recording():
     rec.set_dummy_probe_from_locations(np.c_[np.zeros(384), 100 * np.arange(384)])
 
     with pytest.warns(Warning) as warninfo:
-        check_recording(rec)
+        check_recording(rec, copy_flag=False)
     warnings = {(w.category, w.message.args[0][:11]) for w in warninfo}  # type: ignore
     expected = {
         (RuntimeWarning, "Detected 53"),
