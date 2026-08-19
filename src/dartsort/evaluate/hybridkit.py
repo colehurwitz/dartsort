@@ -12,6 +12,7 @@ from spikeinterface.core.baserecording import BaseRecording
 
 from ..templates import TemplateData
 from ..util.data_util import DARTsortSorting, ensure_path
+from ..util.internal_config import raw_template_cfg
 from ..util.job_util import ensure_computation_config
 from ..util.motion import MotionInfo, resample_motion
 from ..util.py_util import databag
@@ -31,25 +32,35 @@ class HybridDataset:
     metadata: dict[str, Any]
 
     def gt_analysis(
-        self, trough_offset: int = 42, spike_length: int = 121
+        self,
+        trough_offset: int = 42,
+        spike_length: int = 121,
+        override_motion: MotionInfo | None = None,
+        template_cfg=raw_template_cfg,
     ) -> DARTsortAnalysis:
-        if spike_length != self.gt_templates.spike_length_samples:
-            i0 = self.gt_templates.trough_offset_samples - trough_offset
-            assert i0 >= 0
-            template_data = replace(
-                self.gt_templates,
-                templates=self.gt_templates.templates[:, i0 : i0 + spike_length],
-                trough_offset_samples=trough_offset,
-            )
+        if override_motion is None:
+            if spike_length != self.gt_templates.spike_length_samples:
+                i0 = self.gt_templates.trough_offset_samples - trough_offset
+                assert i0 >= 0
+                template_data = replace(
+                    self.gt_templates,
+                    templates=self.gt_templates.templates[:, i0 : i0 + spike_length],
+                    trough_offset_samples=trough_offset,
+                )
+            else:
+                assert trough_offset == self.gt_templates.spike_length_samples
+                template_data = self.gt_templates
+            motion = self.motion
         else:
-            assert trough_offset == self.gt_templates.spike_length_samples
-            template_data = self.gt_templates
+            template_data = None
+            motion = override_motion
         return DARTsortAnalysis.from_sorting(
             recording=self.recording,
             sorting=self.gt_sorting,
             template_data=template_data,
-            motion=self.motion,
+            motion=motion,
             name="GT",
+            template_cfg=template_cfg,
         )
 
 

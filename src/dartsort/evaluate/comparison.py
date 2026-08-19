@@ -59,6 +59,9 @@ class DARTsortGroundTruthComparison:
         self.delta_frames = self.comparison.delta_frames
         self.has_templates = self.tested_analysis.template_data is not None
         self._agreement_scores = None
+        assert np.array_equal(
+            self.gt_analysis.vis_channel_index, self.tested_analysis.vis_channel_index
+        )
 
         if self.compute_distances and self.has_templates:
             if self.verbose:
@@ -625,7 +628,10 @@ class DARTsortGroundTruthComparison:
         # waveforms are read at GT unit max channel
         gt_max_chan = self.gt_analysis.unit_max_channel(gt_unit)
         waveform_kw = dict(
-            max_count=max_samples_per_category, random_seed=rg, main_channel=gt_max_chan
+            max_count=max_samples_per_category,
+            random_seed=rg,
+            main_channel=gt_max_chan,
+            to_main_channel=True,
         )
 
         # return vars dict. lots of stuff going in here.
@@ -676,7 +682,6 @@ class DARTsortGroundTruthComparison:
                 unit_id=tested_unit,
                 which=ind_groups["only_tested_indices"],
                 **waveform_kw,  # type: ignore
-                to_main_channel=True,
             )
         else:
             fp_waves = None
