@@ -245,7 +245,9 @@ def _dartsort_impl(
             _save_cfg=cfg,
             _save_dir=output_dir,
         )
-    ret["motion"] = motion
+    if motion is not None:
+        ds_save_motion(motion, output_dir, work_dir, overwrite)
+        ret["motion"] = motion
 
     is_subsampling = cfg.subsampling_spikes_per_channel is not None
     is_subsampling = is_subsampling and cfg.subsampling_presence != 1.0
