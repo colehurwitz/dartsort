@@ -35,6 +35,7 @@ class HybridDataset:
         self,
         trough_offset: int = 42,
         spike_length: int = 121,
+        override_recording: sc.BaseRecording | None = None,
         override_motion: MotionInfo | None = None,
         template_cfg=raw_template_cfg,
     ) -> DARTsortAnalysis:
@@ -54,8 +55,9 @@ class HybridDataset:
         else:
             template_data = None
             motion = override_motion
+        rec = self.recording if override_recording is None else override_recording
         return DARTsortAnalysis.from_sorting(
-            recording=self.recording,
+            recording=rec,
             sorting=self.gt_sorting,
             template_data=template_data,
             motion=motion,
