@@ -64,6 +64,7 @@ class DARTsortAnalysis:
     registered_geom: np.ndarray
     extract_channel_index: np.ndarray | None
     vis_channel_index: np.ndarray
+    read_channel_index: np.ndarray
     xyza: np.ndarray | None
     x: np.ndarray | None
     z: np.ndarray | None
@@ -271,13 +272,19 @@ class DARTsortAnalysis:
             erp = None
             stable_vis_channels = None
 
+        orig_geom_vis_channel_index = make_channel_index(
+            geom=motion.geom,
+            radius=vis_radius,
+            p=vis_neighborhood_p,
+            to_torch=False,
+        )
         if channel_index is None:
-            channel_index = make_channel_index(
-                geom=motion.geom,
-                radius=vis_radius,
-                p=vis_neighborhood_p,
-                to_torch=False,
-            )
+            channel_index = orig_geom_vis_channel_index
+
+        if channel_index.shape[1] < orig_geom_vis_channel_index.shape[1]:
+            read_channel_index = orig_geom_vis_channel_index
+        else:
+            read_channel_index = channel_index
 
         unit_ids, spike_counts = np.unique(sorting.labels, return_counts=True)  # type: ignore
         spike_counts = spike_counts[unit_ids >= 0]
@@ -309,6 +316,7 @@ class DARTsortAnalysis:
             registered_geom=motion.rgeom,
             extract_channel_index=channel_index,
             vis_channel_index=vis_channel_index,
+            read_channel_index=read_channel_index,
             probe_disp=probe_disp,
             stable_vis_channels=stable_vis_channels,
             xyza=xyza,
@@ -429,14 +437,10 @@ class DARTsortAnalysis:
 
         # read waveforms from disk
         read_chans = self.sorting.channels[which]
-        if self.extract_channel_index is None:
-            read_channel_index = self.vis_channel_index
-        else:
-            read_channel_index = self.extract_channel_index
         waveforms = read_waveforms_channel_index(
             recording=self.recording,
             times_samples=self.sorting.times_samples[which],
-            channel_index=read_channel_index,
+            channel_index=self.read_channel_index,
             main_channels=read_chans,
             trough_offset_samples=self.trough_offset_samples,
             spike_length_samples=self.spike_length_samples,
@@ -457,7 +461,7 @@ class DARTsortAnalysis:
                 channels[None], (waveforms.shape[0], waveforms.shape[2])
             )
         else:
-            channels = read_channel_index[read_chans]
+            channels = self.read_channel_index[read_chans]
             if main_channel is None:
                 main_channel = self.unit_max_channel(unit_id)
         return WaveformsBag(
@@ -659,17 +663,12 @@ class DARTsortAnalysis:
         else:
             n_pitches_shift = None
 
-        if self.extract_channel_index is None:
-            read_channel_index = self.vis_channel_index
-        else:
-            read_channel_index = self.extract_channel_index
-
         waveforms_valid = get_waveforms_on_static_channels(
             waveforms=waveforms,
             geom=self.geom,
             n_pitches_shift=n_pitches_shift,
             main_channels=read_chans,
-            channel_index=read_channel_index,
+            channel_index=self.read_channel_index,
             target_channels=show_chans,
             registered_geom=self.registered_geom,
         )
