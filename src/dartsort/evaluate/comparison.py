@@ -59,6 +59,9 @@ class DARTsortGroundTruthComparison:
         self.delta_frames = self.comparison.delta_frames
         self.has_templates = self.tested_analysis.template_data is not None
         self._agreement_scores = None
+        assert np.array_equal(
+            self.gt_analysis.vis_channel_index, self.tested_analysis.vis_channel_index
+        )
 
         if self.compute_distances and self.has_templates:
             if self.verbose:
@@ -259,7 +262,9 @@ class DARTsortGroundTruthComparison:
         except ValueError:
             pass
         if self.has_templates and (force_distances or self.compute_distances):
-            dist = np.nan_to_num(self.template_distances, nan=np.inf).min(axis=1)
+            dist = np.nan_to_num(
+                self.template_distances, nan=np.inf, posinf=np.inf, neginf=-np.inf
+            ).min(axis=1)
             df["min_temp_dist"] = dist
         rec = []
         for uid in df.index:
@@ -296,8 +301,8 @@ class DARTsortGroundTruthComparison:
     def relevant_tested_units(self, gt_unit_id: int | None = None, threshold=0.05):
         if gt_unit_id is None:
             tested_units = set()
-            for gt_unit_id in self.gt_analysis.unit_ids:
-                tested_units.update(self.relevant_tested_units(gt_unit_id=gt_unit_id))
+            for uu in self.gt_analysis.unit_ids:
+                tested_units.update(self.relevant_tested_units(gt_unit_id=uu))
             return tested_units
         ag = self.agreement_scores.loc[gt_unit_id]
         return ag.index[ag.array >= threshold]
@@ -334,7 +339,9 @@ class DARTsortGroundTruthComparison:
                 if udt.size:
                     match_dt_rms[j] = np.sqrt(np.square(udt).mean())
             except ValueError as e:
-                warnings.warn(f"ValueError in misalignment. SI matching bug. {e=}", stacklevel=2)
+                warnings.warn(
+                    f"ValueError in misalignment. SI matching bug. {e=}", stacklevel=2
+                )
         return match_dt_rms
 
     def matched_misalignment(self, gt_unit_id):
@@ -477,7 +484,8 @@ class DARTsortGroundTruthComparison:
                 warnings.warn(
                     f"Strange match sizes for {gt_unit=} {tested_unit=}: "
                     f"{matched_gt_indices.shape=} {matched_tested_indices.shape=} "
-                    f"{matched_tested_mask.sum()=}", stacklevel=2
+                    f"{matched_tested_mask.sum()=}",
+                    stacklevel=2,
                 )
         else:
             matched_tested_indices = np.zeros(shape=(0,), dtype=np.int64)
@@ -596,7 +604,7 @@ class DARTsortGroundTruthComparison:
             gt_times_ms = self.gt_analysis.sorting.times_samples[in_gt] * to_ms
             tested_times_ms = self.tested_analysis.sorting.times_samples[in_tu] * to_ms
             gt_kdt = KDTree(gt_times_ms[:, None])
-            dd, ii = gt_kdt.query(
+            _dd, ii = gt_kdt.query(
                 tested_times_ms[:, None], distance_upper_bound=self.delta_time
             )
             ii = np.atleast_1d(ii)
@@ -620,7 +628,10 @@ class DARTsortGroundTruthComparison:
         # waveforms are read at GT unit max channel
         gt_max_chan = self.gt_analysis.unit_max_channel(gt_unit)
         waveform_kw = dict(
-            max_count=max_samples_per_category, random_seed=rg, main_channel=gt_max_chan
+            max_count=max_samples_per_category,
+            random_seed=rg,
+            main_channel=gt_max_chan,
+            to_main_channel=True,
         )
 
         # return vars dict. lots of stuff going in here.
@@ -671,7 +682,6 @@ class DARTsortGroundTruthComparison:
                 unit_id=tested_unit,
                 which=ind_groups["only_tested_indices"],
                 **waveform_kw,  # type: ignore
-                to_main_channel=True,
             )
         else:
             fp_waves = None
@@ -741,7 +751,8 @@ class DARTsortGTVersus:
         self.other_analyses = other_analyses
         self.other_names = [oa.name for oa in other_analyses]
         self.other_templates = [
-            (oa.name or f"Test{c}") for oa, c in zip(other_analyses, self.default_ids)
+            (oa.name or f"Test{c}")
+            for oa, c in zip(other_analyses, self.default_ids, strict=True)
         ]
         self.other_sortings = [oa.sorting for oa in other_analyses]
 
@@ -751,7 +762,7 @@ class DARTsortGTVersus:
             assert len(comparisons) == self.n_vs
 
         self.cmps = []
-        for cmp, oa in zip(comparisons, other_analyses):
+        for cmp, oa in zip(comparisons, other_analyses, strict=True):
             if cmp is not None:
                 assert cmp.tested_analysis.name == oa.name
             else:
@@ -773,7 +784,7 @@ class DARTsortGTVersus:
         if self._unit_vs_df is not None:
             return self._unit_vs_df.copy(deep=True)
         dfs = [ocmp.unit_info_dataframe().reset_index() for ocmp in self.cmps]
-        for df, sorter in zip(dfs, self.other_names):
+        for df, sorter in zip(dfs, self.other_names, strict=True):
             df[self.sorter_var] = sorter
         self._unit_vs_df = pd.concat(dfs, axis=0)
         return self._unit_vs_df.copy(deep=True)

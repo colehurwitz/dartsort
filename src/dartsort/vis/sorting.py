@@ -101,7 +101,8 @@ class FiringRateHistogram(OverviewPlot):
             histtype="step",
             color="k" if len(show) <= 1 else ["k", "gray"],
         )
-        axis.set_ylim(bottom=0)
+        if not self.log:
+            axis.set_ylim(bottom=0)
         if len(show) > 1:
             axis.legend(fancybox=False)
         axis.grid()

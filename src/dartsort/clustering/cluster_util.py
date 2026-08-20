@@ -1,19 +1,23 @@
 from typing import cast
 
 import h5py
+import numba
 import numpy as np
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial import KDTree
 
-from ..util import data_util, waveform_util
+from ..util import waveform_util
 from ..util.data_util import (
     DARTsortSorting,
     apply_label_remapping_in_place,
+    count_not_sorted,
     mean_by_label_1d,
     pos_int_unique_and_counts,
+    yield_masked_chunks,
 )
 from ..util.logging_util import get_logger
 from ..util.motion import MotionInfo
+from ..util.py_util import databag
 
 logger = get_logger(__name__)
 
@@ -509,7 +513,7 @@ def get_main_channel_pcs(
     with h5py.File(sorting.parent_h5_path, "r", locking=False) as h5:
         feats_dset = h5[dataset_name]
         channel_index = cast(h5py.Dataset, h5["channel_index"])[:]
-        for ixs, feats in data_util.yield_masked_chunks(
+        for ixs, feats in yield_masked_chunks(
             mask, feats_dset, show_progress=show_progress, desc_prefix="Main channel"
         ):
             feats = feats[:, :rank]
@@ -576,3 +580,102 @@ def decrumb(
     if flatten:
         sorting = sorting.flatten(in_place=in_place)
     return sorting
+
+
+@databag
+class ViolationCounts:
+    unit_ids: np.ndarray
+    spike_counts: np.ndarray
+    """Same shape as unit_ids (flat)"""
+    viol_counts: np.ndarray
+    """Indexed by pair of ids (not flat)"""
+
+
+def violation_matrix(
+    st: DARTsortSorting, *, censor_ms: float = 0.25, viol_ms: float = 1.0
+) -> ViolationCounts:
+    """Count ACG and CCG violations within viol_ms
+
+    Times within censor_ms of each other are ignored in the violation
+    count. The censorship is right-exclusive, so that if censor_ms is 0,
+    exact duplicates are counted; if censor_ms corresponds to 10 samples,
+    9-sample viols are excluded and 10-sample viols are counted.
+    """
+    assert st.labels is not None
+    censor_samples = int(censor_ms * (st.sampling_frequency / 1000.0))
+    viol_samples = int(viol_ms * (st.sampling_frequency / 1000.0))
+
+    unit_ids, spike_counts, _ = pos_int_unique_and_counts(st.labels)
+    nu = (unit_ids.max() + 1).item() if unit_ids.size else 0
+    if not nu or (viol_samples < max(0, censor_samples)):
+        # nothing can be counted, but keep the matrix shape consistent
+        return ViolationCounts(
+            unit_ids=unit_ids,
+            spike_counts=spike_counts,
+            viol_counts=np.zeros((nu, nu), dtype=np.int64),
+        )
+
+    labels = st.labels
+    times = st.times_samples
+    if count_not_sorted(times) > 0:
+        tsort = np.argsort(times, kind="stable")
+        labels = labels[tsort]
+        times = times[tsort]
+
+    # count in chunks, per thread buffer; counts are ti<=tj
+    n = times.size
+    nchunks = max(1, numba.get_num_threads())
+    nchunks = min(nchunks, max(n, 1))
+    starts = (np.arange(nchunks + 1) * n) // nchunks
+    viol_counts = np.zeros((nchunks, nu, nu), dtype=np.int64)
+
+    _violation_count_matrix(
+        times, labels, censor_samples, viol_samples, starts, viol_counts
+    )
+
+    viol_counts = viol_counts.sum(axis=0)
+    viol_diag = np.diagonal(viol_counts).copy()
+    viol_counts += viol_counts.T
+    np.fill_diagonal(viol_counts, viol_diag)
+
+    return ViolationCounts(
+        unit_ids=unit_ids,
+        spike_counts=spike_counts,
+        viol_counts=viol_counts,
+    )
+
+
+@numba.njit(nogil=True, parallel=True)
+def _violation_count_matrix(
+    times: np.ndarray,
+    labels: np.ndarray,
+    censor_samples: int,
+    viol_samples: int,
+    starts: np.ndarray,
+    counts: np.ndarray,
+):
+    n = times.shape[0]
+
+    # parallelize over chunks
+    for c in numba.prange(starts.shape[0] - 1):  # ty: ignore[not-iterable]
+        out = counts[c]
+
+        for i in range(starts[c], starts[c + 1]):
+            li = labels[i]
+            if li < 0:
+                continue
+
+            ti = times[i]
+            first = ti + censor_samples
+            last = ti + viol_samples
+
+            # make sure to read js past the chunk end!
+            for j in range(i + 1, n):
+                if times[j] < first:
+                    continue
+                if times[j] > last:  # be inclusive here i suppose
+                    break
+                lj = labels[j]
+                if lj < 0:
+                    continue
+                out[li, lj] += 1

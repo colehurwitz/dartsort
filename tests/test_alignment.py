@@ -45,6 +45,9 @@ from dartsort.templates.realignment import trim_templates_to_shift
 from dartsort.util.data_util import load
 from dartsort.util.spiketorch import taper
 
+# needed to make sure this debug matcher gizmo gets registered
+from dartsort.util.testing_util import matching_debug_util  # noqa: F401
+
 # constants
 fs = 1000
 t = 7

@@ -73,7 +73,7 @@ class MockPoolExecutor:
             self.initializer(*self.initargs)
         self.initialized = True
 
-    def map(self, function, *iterables, timeout=None, chunksize=1):
+    def map(self, function, *iterables, timeout=None, chunksize=1, buffersize=1):
         self._initialize()
         for result in map(function, *iterables):
             yield result

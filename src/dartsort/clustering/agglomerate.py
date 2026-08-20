@@ -1156,7 +1156,7 @@ def _calc_coentropy(
         u = cands[i]
         q = resps[i]
         log_q = np.log(q)
-        np.nan_to_num(log_q, copy=False, neginf=0.0)
+        np.nan_to_num(log_q, copy=False, neginf=0.0, posinf=np.inf)
         dh = q * log_q
 
         ui0 = u[0]

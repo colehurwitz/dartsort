@@ -1,6 +1,5 @@
 """A simple residual updating template matcher."""
 
-from pathlib import Path
 from typing import Self
 
 import numpy as np
@@ -104,7 +103,9 @@ class ObjectiveUpdateTemplateMatchingPeeler(BasePeeler):
         self.inv_lambda = (
             1.0 / p.amplitude_scaling_variance if self.is_scaling else float("inf")
         )
-        self.is_free_scaling = self.inv_lambda == 0 and p.amplitude_scaling_boundary > 1e6
+        self.is_free_scaling = (
+            self.inv_lambda == 0 and p.amplitude_scaling_boundary > 1e6
+        )
         self.amp_scale_max = 1.0 + p.amplitude_scaling_boundary
         self.amp_scale_min = 1.0 / self.amp_scale_max
         self.whiten_pad = max(0, whiten_kernel_length - 1)

@@ -358,21 +358,47 @@ def get_deconv_resid_decrease_iter(
     )
 
 
-def combine_templates(template_data_a, template_data_b):
+def combine_templates(template_data_a: TemplateData, template_data_b: TemplateData):
     rgeom = template_data_a.registered_geom
     if rgeom is not None:
+        assert template_data_b.registered_geom is not None
         if not np.array_equal(rgeom, template_data_b.registered_geom):
             raise ValueError(
                 f"Template data had different registered geoms: "
                 f"{template_data_a.registered_geom=} {template_data_b.registered_geom=}"
             )
 
+    ta = template_data_a.templates
+    tb = template_data_b.templates
+    assert ta.shape[2] == tb.shape[2]
+    if ta.shape[1] > tb.shape[1]:
+        i0 = (
+            template_data_a.trough_offset_samples
+            - template_data_b.trough_offset_samples
+        )
+        assert i0 >= 0
+        i1 = i0 + template_data_b.spike_length_samples
+        ta = ta[:, i0:i1]
+        trough_offset_samples = template_data_b.trough_offset_samples
+        sampling_frequency = template_data_b.sampling_frequency
+    elif tb.shape[1] > ta.shape[1]:
+        i0 = (
+            template_data_b.trough_offset_samples
+            - template_data_a.trough_offset_samples
+        )
+        assert i0 >= 0
+        i1 = i0 + template_data_a.spike_length_samples
+        tb = tb[:, i0:i1]
+        trough_offset_samples = template_data_a.trough_offset_samples
+        sampling_frequency = template_data_a.sampling_frequency
+    else:
+        trough_offset_samples = template_data_a.trough_offset_samples
+        sampling_frequency = template_data_a.sampling_frequency
+
     ids_a = template_data_a.unit_ids
     ids_b = template_data_b.unit_ids + ids_a.max() + 1
     unit_ids = np.concatenate((ids_a, ids_b))
-    templates = np.concatenate(
-        (template_data_a.templates, template_data_b.templates), axis=0
-    )
+    templates = np.concatenate((ta, tb), axis=0)
     spike_counts = np.concatenate(
         (template_data_a.spike_counts, template_data_b.spike_counts)
     )
@@ -389,8 +415,8 @@ def combine_templates(template_data_a, template_data_b):
         spike_counts=spike_counts,
         registered_geom=rgeom,
         spike_counts_by_channel=spike_counts_by_channel,
-        trough_offset_samples=template_data_a.trough_offset_samples,
-        sampling_frequency=template_data_a.sampling_frequency,
+        trough_offset_samples=trough_offset_samples,
+        sampling_frequency=sampling_frequency,
     )
 
     cross_mask = np.logical_and(

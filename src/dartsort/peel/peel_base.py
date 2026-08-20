@@ -9,7 +9,7 @@ from itertools import repeat
 from pathlib import Path
 from sys import getrefcount
 from threading import Lock, local
-from typing import Any, TypedDict
+from typing import Any
 from warnings import catch_warnings, filterwarnings
 
 import h5py
@@ -18,6 +18,7 @@ import torch
 from spikeinterface.core import BaseRecording
 from spikeinterface.core.recording_tools import get_chunk_with_margin
 from sympy import divisors
+from typing_extensions import TypedDict
 
 from ..transform import WaveformPipeline
 from ..util.data_util import (
@@ -397,7 +398,6 @@ class BasePeeler(BModule):
 
             # we very much do not want to leak self into a global and have its
             # memory tied up while dartsort wants to go do other stuff
-            del _peeler_process_context.ctx
             _peeler_process_context.ctx = None
 
         return output_hdf5_filename
@@ -747,7 +747,7 @@ class BasePeeler(BModule):
         )
 
         if tmp_dir is None:
-            tmp_dir = computation_cfg.tmpdir_parent
+            tmp_dir = computation_cfg.maybe_tmpdir_parent()
 
         with tempfile.TemporaryDirectory(dir=tmp_dir) as temp_dir:
             temp_hdf5_filename = Path(temp_dir) / "peeler_fit.h5"
@@ -1200,15 +1200,8 @@ class BasePeeler(BModule):
 # -- batch result type stub
 
 
-try:
-    # this isn't supported until 3.15, but it helps the type checker
-    # so I'm keeping it in here. everything seems to be fine just setting
-    # it to dict in practice in the except clause.
-
-    class PeelingBatchResult(TypedDict, extra_items=torch.Tensor):  # ty: ignore[unknown-argument]
-        n_spikes: int
-except TypeError:
-    PeelingBatchResult = dict  # type: ignore
+class PeelingBatchResult(TypedDict, extra_items=torch.Tensor):
+    n_spikes: int
 
 
 peeling_empty_result = PeelingBatchResult(n_spikes=0)

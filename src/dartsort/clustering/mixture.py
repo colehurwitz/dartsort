@@ -5855,31 +5855,40 @@ def _noise_factors(*, noise, obs_ix, miss_near_ix, cache_prefix):
         jmnixv = jmnix[jmnixvix]
         ncoi = joixv.numel()
         ncmi = jmnixv.numel()
+        assert ncoi > 0
 
+        # -- observed-only stuff
+        # calculate observed-only stuff
         jCoo = noise.marginal_covariance(
             channels=joixv, cache_prefix=cache_prefix, cache_key=j
         )
-        jCom = noise.offdiag_covariance(
-            channels_left=joixv, channels_right=jmnixv, device=dev
-        )
-        jCom = jCom.to_dense().to(device=dev)
-
         jL = jCoo.cholesky(upper=False)  # C = LL'
         jLinv = jL.inverse().to_dense()
         jCooinv = jLinv.T @ jLinv  # Cinv = Linv' Linv
         jlogdet = 2.0 * jL.to_dense().diagonal(dim1=-2, dim2=-1).log().sum()
-        jCooinvCom = jCooinv @ jCom
 
+        # set observed-only stuff
         logdet[j] = jlogdet
         # fancy inds to front! love that.
-        jCooinv = jCooinv.view(rank, ncoi, rank, ncoi)
-        Cooinv[j, :, joixvix[:, None], :, joixvix[None]] = jCooinv.permute(1, 3, 0, 2)
+        jCooinv_out = jCooinv.view(rank, ncoi, rank, ncoi).permute(1, 3, 0, 2)
+        Cooinv[j, :, joixvix[:, None], :, joixvix[None]] = jCooinv_out
+        jLinv_out = jLinv.view(rank, ncoi, rank, ncoi).permute(1, 3, 0, 2)
+        Linv[j, :, joixvix[:, None], :, joixvix[None]] = jLinv_out
+
+        # -- observed-missing stuff
+        if ncmi == 0:
+            # i am a lonely island
+            # importantly, that means my Com is 0. so everything is 0 below.
+            continue
+        jCom = noise.offdiag_covariance(
+            channels_left=joixv, channels_right=jmnixv, device=dev
+        )
+        jCom = jCom.to_dense().to(device=dev)
+        jCooinvCom = jCooinv @ jCom
         jCooinvCom = jCooinvCom.view(rank, ncoi, rank, ncmi)
         CooinvCom[j, :, joixvix[:, None], :, jmnixvix[None]] = jCooinvCom.permute(
             1, 3, 0, 2
         )
-        jLinv = jLinv.view(rank, ncoi, rank, ncoi)
-        Linv[j, :, joixvix[:, None], :, joixvix[None]] = jLinv.permute(1, 3, 0, 2)
 
     obsdim = rank * nc_obs
     missdim = rank * nc_miss_near
@@ -6739,7 +6748,7 @@ def _update_lut_mean_batch(
 
     # constplogdet. add in the signal-rank-0-only terms.
     lut_params.constplogdet[i0:i1] = neighb_cov.nobs[nn].mul_(LOG_2PI)  # type: ignore  # ty: ignore[x]
-    lut_params.constplogdet[i0:i1] += neighb_cov.b.logdet[nn]
+    lut_params.constplogdet[i0:i1] += neighb_cov.b.logdet[nn]  # ty: ignore[not-subscriptable]
     if pnoid:
         assert lut_params.constplogdet[i0:i1].isfinite().all()  # type: ignore  # ty: ignore[x]
 
@@ -6799,7 +6808,7 @@ def _update_lut_ppca_batch(
     assert lut_params.Tpad is not None
     lut_params.Tpad[i0:i1, :, :-1] = T  # type: ignore  # ty: ignore[x]
     cap_logdet = L.diagonal(dim1=-2, dim2=-1).log().sum(dim=1).mul_(2.0)
-    lut_params.constplogdet[i0:i1] += cap_logdet
+    lut_params.constplogdet[i0:i1] += cap_logdet  # ty: ignore[not-subscriptable]
     if pnoid:
         assert lut_params.b.constplogdet[i0:i1].isfinite().all()
 

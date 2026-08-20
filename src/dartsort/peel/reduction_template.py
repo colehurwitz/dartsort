@@ -18,7 +18,6 @@ from ..transform.temporal_pca import FullProbeTemporalPCAEmbedder
 from ..transform.whiten import WaveformWhitener
 from ..util.data_util import (
     DARTsortSorting,
-    get_top_assignment_weights,
     subsample_by_count_and_valid_time,
 )
 from ..util.internal_config import (
@@ -31,7 +30,7 @@ from ..util.job_util import ensure_computation_config
 from ..util.logging_util import get_logger
 from ..util.motion import MotionInfo
 from ..util.noise_util import Whitener
-from ..util.py_util import ensure_path
+from ..util.py_util import ensure_path, panic
 from ..util.waveform_util import full_channel_index
 from .grab import GrabAndFeaturize
 
@@ -92,7 +91,7 @@ class ReductionTemplateData(TemplateData):
         with TemporaryDirectory(
             prefix="dartsorttemplates",
             ignore_cleanup_errors=True,
-            dir=computation_cfg.tmpdir_parent,
+            dir=computation_cfg.maybe_tmpdir_parent(),
         ) as tdir:
             tdir = ensure_path(tdir)
             h5p = tdir / "tmp.h5"
@@ -143,7 +142,7 @@ class ReductionTemplateData(TemplateData):
             )
             templates = weights * raw_mean + (1 - weights) * svd_mean
         else:
-            assert False
+            panic(template_cfg.denoising_method)
 
         spike_counts = count.max(axis=1)
         if motion.drifting:
@@ -340,9 +339,6 @@ class TemplateReduction(GrabAndFeaturize):
         # grab weights and labels for fixed_properties
         assert sorting.labels is not None
         fixed_properties = {"labels": sorting.labels, "channels": sorting.channels}
-        if template_cfg.weighted:
-            weights = get_top_assignment_weights(sorting)
-            fixed_properties["template_weights"] = weights
         if (c := getattr(sorting, "alignment_signs", None)) is not None:
             fixed_properties["alignment_signs"] = c
         else:
@@ -390,13 +386,13 @@ class TemplateReduction(GrabAndFeaturize):
             elif len(reducers) == 1:
                 svd_f = None
             else:
-                assert False
+                panic(len(reducers))
         elif reducers[0].name_prefix == "svd":
             assert len(reducers) == 1
             raw_f = None
             svd_f = reducers[0]
         else:
-            assert False
+            panic(reducers[0].name_prefix)
 
         if raw_f is not None:
             counts, raw_mean, raw_std = raw_f.reduction_results(

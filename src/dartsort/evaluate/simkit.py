@@ -1,38 +1,23 @@
 import warnings
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
-import h5py
 import numpy as np
 import pandas as pd
-import torch
 from dredge import motion_util
 from scipy.signal import sawtooth
 from spikeinterface.core import BaseRecording, read_binary_folder
-from spikeinterface.core.recording_tools import get_chunk_with_margin
-from spikeinterface.preprocessing.basepreprocessor import (
-    BasePreprocessor,
-    BasePreprocessorSegment,
-    BaseRecordingSegment,
-)
 
 from ..templates import TemplateData
-from ..util.data_util import (
-    DARTsortSorting,
-    divide_randomly,
-    ensure_path,
-    extract_random_snips,
-)
+from ..util.data_util import DARTsortSorting, ensure_path
 from ..util.job_util import ensure_computation_config
-from ..util.logging_util import get_logger, progbar
+from ..util.logging_util import get_logger
 from ..util.motion import MotionInfo
-from ..util.multiprocessing_util import get_pool
-from ..util.spiketorch import ptp
-from ..util.waveform_util import make_channel_index
+from ..util.py_util import panic
 from .noise_recording_tools import get_background_recording
 from .sim_template_tools import TemplateSimulator, get_template_simulator
 from .simlib import (
-    add_features,
+    InjectSpikesPreprocessor,
     default_sim_featurization_cfg,
     default_temporal_kernel_npy,
     simulate_sorting,
@@ -89,6 +74,7 @@ def generate_simulation(
     save_injected_waveforms=False,
     save_noise_waveforms=False,
     save_collision_waveforms=False,
+    save_collisioncleaned_waveforms=True,
     save_collidedness=False,
     n_residual_snips=4096,
     # control
@@ -104,7 +90,7 @@ def generate_simulation(
     if folder is not None and not (overwrite or just_noise or no_save):
         try:
             return load_simulation(folder)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
 
     if noise_recording_folder is not None:
@@ -162,7 +148,7 @@ def generate_simulation(
             temporal_jitter=temporal_jitter,
             **(template_simulator_kwargs or {}),
         )
-    sim_recording = InjectSpikesPreprocessor(
+    sim_recording = make_simulated_recording(
         noise_recording,
         firing_kind=firing_kind,
         min_fr_hz=min_fr_hz,
@@ -207,6 +193,7 @@ def generate_simulation(
         save_injected_waveforms=save_injected_waveforms,
         save_noise_waveforms=save_noise_waveforms,
         save_collision_waveforms=save_collision_waveforms,
+        save_collisioncleaned_waveforms=save_collisioncleaned_waveforms,
         save_collidedness=save_collidedness,
         n_residual_snips=n_residual_snips,
     )
@@ -236,676 +223,150 @@ def load_simulation(folder):
     )
 
 
-class InjectSpikesPreprocessor(BasePreprocessor):
-    def __init__(self, recording, **simulation_kwargs):
-        super().__init__(recording)
+def make_simulated_recording(
+    recording: BaseRecording,
+    *,
+    template_simulator: TemplateSimulator,
+    firing_kind: Literal["uniform", "switching_two_state"] = "uniform",
+    min_fr_hz: float = 1.0,
+    max_fr_hz: float = 20.0,
+    state_affinity: float = 0.3,
+    down_max_fr_hz: float = 5.0,
+    up_min_fr_hz: float = 8.0,
+    refractory_ms: float = 1.0,
+    globally_refractory: bool = False,
+    drift_type: Literal["line", "triangle"] = "triangle",
+    drift_speed: float = 0.0,
+    drift_period: float = 30.0,
+    amplitude_jitter: float = 0.0,
+    amp_jitter_family: Literal["gamma", "uniform"] = "uniform",
+    temporal_jitter: int = 1,
+    temporal_jitter_family: Literal["uniform", "by_unit"] = "uniform",
+    extract_radius: float = 100.0,
+    random_seed: int = 0,
+    features_dtype="float32",
+    compute_collision_waveforms: bool = False,
+) -> InjectSpikesPreprocessor:
+    """Sample a spike train and a drift trajectory, and inject spikes into recording
 
-        self._serializability["json"] = False
-        self._serializability["pickle"] = False
+    This is the sampling half of the simulation: it draws the units' firing rates
+    (and their latent states, if any), the spike train, and the motion. The
+    injection itself is handled by the InjectSpikesPreprocessor.
+    """
+    fs = recording.sampling_frequency
+    n_samples = recording.get_num_frames()
+    n_units = template_simulator.n_units
+    extra = {}
 
-        assert len(recording._recording_segments) == 1
-        self.add_recording_segment(
-            InjectSpikesPreprocessorSegment(
-                recording._recording_segments[0],
-                n_channels=self.get_num_channels(),
-                geom=recording.get_channel_locations(),
-                **simulation_kwargs,
-            )
-        )
-        self.segment = cast(
-            InjectSpikesPreprocessorSegment, self._recording_segments[0]
-        )
-
-    def basic_sorting(self) -> DARTsortSorting:
-        return self.segment.basic_sorting()
-
-    def drift(self, t_samples):
-        return self.segment.drift(t_samples)
-
-    def templates(self, t_samples=None, *, up=False):
-        return self.segment.templates(t_samples, up=up)
-
-    def motion(self) -> MotionInfo:
-        return self.segment.motion
-
-    def registered_geom(self):
-        motion = self.motion()
-        geom = self.get_channel_locations()
-        rgeom = motion.rgeom
-        matches = np.square(geom[None] - rgeom[:, None]).sum(2).argmin(0)
-        return rgeom, matches
-
-    def template_data(self, hdf5_path=None):
-        if not self.segment.drift_speed:
-            return TemplateData(
-                templates=self.templates()[1],
-                unit_ids=np.arange(self.segment.n_units),
-                spike_counts=np.ones(self.segment.n_units),
-                registered_geom=self.get_channel_locations(),
-                trough_offset_samples=self.segment.trough_offset_samples,
-                sampling_frequency=self.sampling_frequency,
-            )
-
-        rgeom, matches = self.registered_geom()
-        _, templates, _ = self.templates()
-        rtemplates = np.zeros(
-            (*templates.shape[:-1], len(rgeom)), dtype=templates.dtype
-        )
-        rtemplates[:, :, matches] = templates
-        return TemplateData(
-            templates=rtemplates,
-            unit_ids=np.arange(self.segment.n_units),
-            spike_counts=np.ones(self.segment.n_units),
-            registered_geom=rgeom,
-            trough_offset_samples=self.segment.trough_offset_samples,
-            sampling_frequency=self.sampling_frequency,
-        )
-
-    def gt_unit_information(self):
-        ids = np.arange(self.segment.n_units)
-        pos, templates, _ = self.templates()
-        x, y, z = pos.T
-        counts = np.zeros(self.segment.n_units, dtype=np.int64)
-        u, c = np.unique(self.segment.labels, return_counts=True)
-        counts[u] = c
-        df = dict(
-            gt_unit_id=ids,
-            x=x,
-            y=y,
-            z=z,
-            ptp_amplitude=np.ptp(templates, axis=1).max(1),
-            template_norm=np.linalg.norm(templates, axis=(1, 2)),
-            gt_spike_count=counts,
-            gt_fr_hz=counts / self.get_total_duration(),
-        )
-        return pd.DataFrame(df)
-
-    def save_features_to_hdf5(
-        self,
-        hdf5_path,
-        *,
-        overwrite=False,
-        n_jobs=1,
-        show_progress=True,
-        n_residual_snips=4096,
-        save_injected_waveforms=False,
-        save_noise_waveforms=False,
-        save_collision_waveforms=False,
-        save_collidedness=False,
-        chunk_len_s=0.5,
-    ):
-        if overwrite:
-            if hdf5_path.exists():
-                hdf5_path.unlink()
-        else:
-            assert not hdf5_path.exists()
-
-        n_jobs, Executor, context = get_pool(n_jobs, cls="ThreadPoolExecutor")
-        with Executor(max_workers=n_jobs, mp_context=context) as pool:
-            nt = self.get_num_frames()
-            bs = int(self.sampling_frequency * chunk_len_s)
-            chunk_starts = range(0, nt, bs)
-            n_residual_snips = min(
-                n_residual_snips,
-                self.segment.get_num_samples() // self.segment.spike_length_samples,
-            )
-            residual_snips_per_chunk = divide_randomly(
-                n_residual_snips, len(chunk_starts), self.segment.random_seed
-            )
-            jobs = (
-                ((t, min(t + bs, nt)), dict(extract=True, n_residual_snips=nrs))
-                for t, nrs in zip(chunk_starts, residual_snips_per_chunk, strict=True)
-            )
-            with h5py.File(hdf5_path, "w", locking=False) as h5:
-                n = self.segment.n_spikes
-
-                # fixed arrays
-                h5.create_dataset("sampling_frequency", data=self.sampling_frequency)
-                h5.create_dataset("geom", data=self.get_channel_locations())
-                h5.create_dataset(
-                    "channel_index", data=self.segment.extract_channel_index
-                )
-                times_samples = (
-                    self.segment.times_samples + self.segment.upsampling_offsets
-                )
-                h5.create_dataset("times_samples", data=times_samples)
-                h5.create_dataset(
-                    "times_seconds",
-                    data=self.sample_index_to_time(times_samples),
-                )
-                h5.create_dataset("states", data=self.segment.states)
-                h5.create_dataset("labels", data=self.segment.labels)
-                h5.create_dataset("scalings", data=self.segment.scalings)
-                h5.create_dataset("jitter_ix", data=self.segment.jitter_ix)
-                pos, temp, off = self.segment.template_simulator.templates(up=True)
-                h5.create_dataset("unit_positions", data=pos)
-                h5.create_dataset("up_offsets", data=off)
-                h5.create_dataset("templates_up", data=temp)
-
-                # arrays discovered in batches below
-                f_dt = self.segment.features_dtype
-                inj_wf_shape = self.segment.inj_wf_shape
-                dataset_shapes = {
-                    "localizations": ((3,), f_dt),
-                    "displacements": ((), f_dt),
-                    "ptp_amplitudes": ((), f_dt),
-                    "channels": ((), np.int32),
-                    "collisioncleaned_waveforms": (inj_wf_shape, f_dt),
-                    "time_shifts": ((), np.int16),
-                }
-                if save_injected_waveforms:
-                    dataset_shapes["injected_waveforms"] = (inj_wf_shape, f_dt)
-                if save_noise_waveforms:
-                    dataset_shapes["noise_waveforms"] = (inj_wf_shape, f_dt)
-                if save_collision_waveforms:
-                    dataset_shapes["collision_waveforms"] = (inj_wf_shape, f_dt)
-                dataset_shapes["collidedness"] = ((), f_dt)
-                if save_collidedness:
-                    dataset_shapes["gt_collidedness"] = ((), f_dt)
-                datasets = {
-                    k: h5.create_dataset(k, dtype=dt, shape=(n, *sh))
-                    for k, (sh, dt) in dataset_shapes.items()
-                }
-
-                # residual snippets
-                if n_residual_snips:
-                    nrs_dset = h5.create_dataset(
-                        "n_residuals", data=np.zeros((), dtype=np.int64)
-                    )
-                    residual = h5.create_dataset(
-                        "residual",
-                        shape=(n_residual_snips, *self.segment.wf_shape),
-                        maxshape=(n_residual_snips, *self.segment.wf_shape),
-                        chunks=(min(16, n_residual_snips), *self.segment.wf_shape),
-                        dtype=f_dt,
-                    )
-                    residual_times = h5.create_dataset(
-                        "residual_times_seconds",
-                        shape=(n_residual_snips,),
-                        maxshape=(n_residual_snips,),
-                        chunks=(min(16, n_residual_snips),),
-                        dtype=f_dt,
-                    )
-                else:
-                    nrs_dset = residual = residual_times = None
-
-                results = pool.map(self.segment._get_traces_and_inject_spikes_job, jobs)
-                if show_progress:
-                    results = progbar(
-                        results,
-                        total=len(chunk_starts),
-                        desc="Extract GT features",
-                        smoothing=0.02,
-                    )
-
-                i1_prev = 0
-                n_injected = 0
-                resid_ix = 0
-                for res in results:
-                    assert res is not None
-                    _, s = res
-                    del res, _
-                    i0 = cast(int, s["i0"])
-                    i1 = cast(int, s["i1"])
-                    assert i0 == i1_prev
-                    i1_prev = i1
-                    n_injected += i1 - i0
-
-                    for k, ds in datasets.items():
-                        ds[i0:i1] = s[k]
-
-                    nrs = s["n_residual_snips"]
-                    if not nrs:
-                        continue
-                    assert nrs == cast(np.ndarray, s["residual"]).shape[0]
-                    assert nrs == cast(np.ndarray, s["residual_times"]).shape[0]
-                    assert residual is not None
-                    assert nrs_dset is not None
-                    assert residual_times is not None
-                    assert resid_ix is not None
-                    residual[resid_ix : resid_ix + nrs] = s["residual"]
-                    residual_times[resid_ix : resid_ix + nrs] = s["residual_times"]
-                    nrs_dset[()] = resid_ix + nrs
-                    resid_ix += nrs
-                if residual is not None and resid_ix != n_residual_snips:
-                    assert residual_times is not None
-                    residual.resize((resid_ix, *residual.shape[1:]))
-                    residual_times.resize((resid_ix, *residual_times.shape[1:]))
-                if residual is not None:
-                    assert residual_times is not None
-                    assert nrs_dset is not None
-                    assert residual.shape[0] == residual_times.shape[0] == resid_ix
-                    assert nrs_dset[()] == resid_ix
-                assert i1_prev == n
-            assert n_injected == n
-
-    def save_simulation(
-        self,
-        folder,
-        *,
-        overwrite=False,
-        n_jobs=1,
-        featurization_cfg=default_sim_featurization_cfg,
-        n_residual_snips=4096,
-        computation_cfg=None,
-        save_injected_waveforms=False,
-        save_noise_waveforms=False,
-        save_collision_waveforms=False,
-        save_collidedness=False,
-        chunk_len_s=0.5,
-    ):
-        folder = ensure_path(folder)
-        folder.mkdir(exist_ok=True)
-        recording_dir = folder / "recording"
-        templates_npz = folder / "templates.npz"
-        sorting_h5 = folder / "dartsort_sorting.h5"
-        unit_info_csv = folder / "unit_information.csv"
-
-        if recording_dir.exists():
-            try:
-                recording = read_binary_folder(recording_dir)
-                logger.info("Loaded", recording_dir)
-            except Exception:
-                recording = None
-        else:
-            recording = None
-        if recording is None:
-            with warnings.catch_warnings(record=True) as ws:
-                recording = self.save_to_folder(
-                    folder=recording_dir,
-                    overwrite=True,
-                    n_jobs=n_jobs or 1,
-                    pool_engine="thread",
-                    chunk_duration=chunk_len_s,
-                )
-                for w in ws:
-                    msg = str(w.message)
-                    if msg.startswith("The extractor is not serializable "):
-                        continue
-                    if msg.startswith("auto_cast_uint"):
-                        continue
-                    raise w.category(w.message)
-        n_residual_snips = 0 if featurization_cfg is None else n_residual_snips
-        self.save_features_to_hdf5(
-            sorting_h5,
-            n_jobs=n_jobs,
-            overwrite=overwrite,
-            n_residual_snips=n_residual_snips,
-            save_injected_waveforms=save_injected_waveforms,
-            save_noise_waveforms=save_noise_waveforms,
-            save_collision_waveforms=save_collision_waveforms,
-            save_collidedness=save_collidedness,
-            chunk_len_s=chunk_len_s,
-        )
-        if featurization_cfg is not None and not featurization_cfg.skip:
-            # this is only for the TPCA feature.
-            torch.manual_seed(self.segment.random_seed)
-            add_features(sorting_h5, recording, featurization_cfg, computation_cfg)
-
-        self.gt_unit_information().to_csv(unit_info_csv)
-        self.motion().save(folder)
-        self.template_data(sorting_h5).to_npz(templates_npz)
-
-
-class InjectSpikesPreprocessorSegment(BasePreprocessorSegment):
-    def __init__(
-        self,
-        parent_recording_segment: BaseRecordingSegment,
-        n_channels: int,
-        *,
-        geom: np.ndarray,
-        firing_kind: Literal["uniform", "switching_two_state"],
-        min_fr_hz: float,
-        max_fr_hz: float,
-        state_affinity: float,
-        down_max_fr_hz: float,
-        up_min_fr_hz: float,
-        template_simulator,
-        drift_type: Literal["line", "triangle"],
-        drift_speed: float,
-        drift_period: float,
-        amplitude_jitter: float,
-        amp_jitter_family: Literal["gamma", "uniform"],
-        temporal_jitter: int,
-        temporal_jitter_family: Literal["uniform", "by_unit"],
-        random_seed: int | np.random.Generator,
-        refractory_ms: float,
-        globally_refractory: bool,
-        extract_radius: float,
-        features_dtype="float32",
-        compute_collision_waveforms=False,
-    ):
-        super().__init__(parent_recording_segment)
-        assert drift_type in ("line", "triangle")
-
-        fs = getattr(self, "sampling_frequency", None)
-        if fs is None:
-            fs = getattr(self, "_sampling_frequency", None)
-        assert fs is not None
-        self.fs = fs
-
-        self.drift_type = drift_type
-        self.drift_speed = drift_speed
-        self.drift_period = drift_period
-        self.temporal_jitter = temporal_jitter
-        self.temporal_jitter_family = temporal_jitter_family
-        self.features_dtype = features_dtype
-        self.template_simulator = template_simulator
-        self.refractory_samples = int(refractory_ms * (fs / 1000.0))
-
-        # store motion
-
-        if not self.drift_speed:
-            self.motion = MotionInfo.from_motion_est(geom=geom)
-        else:
-            duration_s = np.ceil(self.get_end_time() - self.get_start_time())
-            t = np.arange(duration_s)
-            time_bin_centers = t + 0.5 * np.diff(t).mean()
-            tbc_samples = time_bin_centers * fs
-            displacement = self.drift(tbc_samples)
-            dredge_me = motion_util.get_motion_estimate(
-                displacement=displacement, time_bin_centers_s=time_bin_centers
-            )
-            self.motion = MotionInfo.from_motion_est(
-                geom=geom,
-                dredge_motion_est=dredge_me,
-            )
-
-        # shapes
-        self.n_units = self.template_simulator.n_units
-        self.n_channels = n_channels
-        self.chans_arange = np.arange(n_channels)
-        self.spike_length_samples = self.template_simulator.spike_length_samples()
-        self.trough_offset_samples = self.template_simulator.trough_offset_samples()
-        self.snippet_time_ix = np.arange(
-            -self.trough_offset_samples,
-            self.spike_length_samples - self.trough_offset_samples,
-        )
-        self.spike_safe_pad = max(
-            self.trough_offset_samples,
-            self.spike_length_samples - self.trough_offset_samples,
-        )
-        self.margin = 2 * self.spike_safe_pad
-        self.extract_channel_index = make_channel_index(
-            self.template_simulator.geom, extract_radius
-        )
-        self.wf_shape = (self.spike_length_samples, self.n_channels)
-        self.inj_wf_shape = (
-            self.spike_length_samples,
-            self.extract_channel_index.shape[1],
-        )
-        self.template_shape = (self.n_units, *self.wf_shape)
-        self.template_shape_up = (self.n_units, temporal_jitter, *self.wf_shape)
-        self.compute_collision_waveforms = compute_collision_waveforms
-
-        # bake all random stuff
-        rg = np.random.default_rng(random_seed)
-        n_bins = int(np.ceil(self.get_num_samples() / fs))
-        if firing_kind == "uniform":
-            firing_rates = rg.uniform(min_fr_hz, max_fr_hz, size=self.n_units)
-            states = np.zeros(n_bins, dtype=np.int32)
-        elif firing_kind == "switching_two_state":
-            states, firing_rates = simulate_twostate_switching(
-                rg=rg,
-                n_bins=n_bins,
-                state_affinity=state_affinity,
-                n_units=self.n_units,
-                min_fr=min_fr_hz,
-                down_max_fr=down_max_fr_hz,
-                up_min_fr=up_min_fr_hz,
-                max_fr=max_fr_hz,
-            )
-        else:
-            raise ValueError(f"Unknown {firing_kind=}")
-        self.random_seed = random_seed
-        sorting = simulate_sorting(
-            self.n_units,
-            self.get_num_samples(),
-            firing_rates=firing_rates,
+    # firing rates, and the latent state which drives them
+    rg = np.random.default_rng(random_seed)
+    n_bins = int(np.ceil(n_samples / fs))
+    if firing_kind == "uniform":
+        firing_rates = rg.uniform(min_fr_hz, max_fr_hz, size=n_units)
+    elif firing_kind == "switching_two_state":
+        states, firing_rates = simulate_twostate_switching(
             rg=rg,
-            nbefore=self.trough_offset_samples,
-            spike_length_samples=self.spike_length_samples,
-            sampling_frequency=fs,
-            refractory_samples=self.refractory_samples,
-            globally_refractory=globally_refractory,
+            n_bins=n_bins,
+            state_affinity=state_affinity,
+            n_units=n_units,
+            min_fr=min_fr_hz,
+            down_max_fr=down_max_fr_hz,
+            up_min_fr=up_min_fr_hz,
+            max_fr=max_fr_hz,
         )
-        sv = cast(np.recarray, sorting.to_spike_vector())
-        self.states = states
-        self.times_samples = sv["sample_index"]
-        self.labels = sv["unit_index"]
-        self.n_spikes = sorting.count_total_num_spikes()
-        assert self.times_samples.shape == self.labels.shape == (self.n_spikes,)
+        extra["states"] = states
+    else:
+        raise ValueError(f"Unknown {firing_kind=}")
 
-        if amplitude_jitter and amp_jitter_family == "gamma":
-            alpha = 1.0 / amplitude_jitter**2
-            theta = amplitude_jitter**2
-            self.scalings = rg.gamma(shape=alpha, scale=theta, size=self.n_spikes)
-        elif amplitude_jitter and amp_jitter_family == "uniform":
-            self.scalings = rg.uniform(
-                1.0 - amplitude_jitter, 1.0 + amplitude_jitter, size=self.n_spikes
-            )
-        else:
-            assert not amplitude_jitter
-            self.scalings = np.ones(1, dtype=features_dtype)
-            self.scalings = np.broadcast_to(self.scalings, (self.n_spikes,))
+    sorting = simulate_sorting(
+        n_units,
+        n_samples,
+        firing_rates=firing_rates,
+        rg=rg,
+        nbefore=template_simulator.trough_offset_samples(),
+        spike_length_samples=template_simulator.spike_length_samples(),
+        sampling_frequency=fs,
+        refractory_samples=int(refractory_ms * (fs / 1000.0)),
+        globally_refractory=globally_refractory,
+    )
 
-        if self.temporal_jitter > 1 and temporal_jitter_family == "uniform":
-            self.jitter_ix = rg.integers(self.temporal_jitter, size=self.n_spikes)
-        elif self.temporal_jitter > 1 and temporal_jitter_family == "by_unit":
-            self.jitter_ix = self.labels % self.temporal_jitter
-        else:
-            self.jitter_ix = np.zeros(1, dtype=np.int64)
-            self.jitter_ix = np.broadcast_to(self.jitter_ix, (self.n_spikes,))
-        if temporal_jitter == 1:
-            self.upsampling_offsets = np.zeros_like(self.times_samples)
-        else:
-            self.upsampling_offsets = template_simulator.offsets_up[
-                self.labels, self.jitter_ix
-            ]
+    motion = simulate_motion(
+        recording,
+        drift_type=drift_type,
+        drift_speed=drift_speed,
+        drift_period=drift_period,
+    )
 
-    def basic_sorting(self) -> DARTsortSorting:
-        assert isinstance(self.fs, (int, float))
-        return DARTsortSorting(
-            times_samples=self.times_samples + self.upsampling_offsets,
-            labels=self.labels,
-            channels=np.zeros_like(self.times_samples),
-            sampling_frequency=self.fs,
-            ephemeral_features=dict(
-                time_shifts=self.upsampling_offsets,
-                jitter_ix=self.jitter_ix,
-                scalings=self.scalings,
-            ),
-        )
+    return InjectSpikesPreprocessor(
+        recording,
+        sorting=sorting,
+        motion=motion,
+        template_simulator=template_simulator,
+        amplitude_jitter=amplitude_jitter,
+        amp_jitter_family=amp_jitter_family,
+        temporal_jitter=temporal_jitter,
+        temporal_jitter_family=temporal_jitter_family,
+        extract_radius=extract_radius,
+        random_seed=random_seed,
+        features_dtype=features_dtype,
+        compute_collision_waveforms=compute_collision_waveforms,
+        extra_data_to_save=extra,
+    )
 
-    def drift(self, t_samples):
-        if not self.drift_speed:
-            return np.zeros_like(t_samples)
 
-        if self.drift_type == "line":
-            t_center = self.get_num_samples() / 2
-            dt = (t_samples - t_center) / self.fs
-            return dt * self.drift_speed
+def simulate_drift(
+    recording: BaseRecording,
+    t_samples,
+    *,
+    drift_type: Literal["line", "triangle"],
+    drift_speed: float,
+    drift_period: float,
+):
+    """Displacement (um) of the whole probe at the times t_samples."""
+    if not drift_speed:
+        return np.zeros_like(t_samples)
 
-        if self.drift_type == "triangle":
-            t_seconds = self.sample_index_to_time(t_samples)
-            phase = t_seconds * (2 * np.pi / self.drift_period)
-            wave = sawtooth(phase, width=0.5)
-            # -1 to 1 and back to -1, so divide by 4 to have 2*ptp=drift_speed*drift_period.
-            return wave * (self.drift_speed * self.drift_period / 4.0)
+    if drift_type == "line":
+        t_center = recording.get_num_frames() / 2
+        dt = (t_samples - t_center) / recording.sampling_frequency
+        return dt * drift_speed
 
-        raise ValueError(f"Unknown {self.drift_type=}")
+    if drift_type == "triangle":
+        t_seconds = recording.sample_index_to_time(t_samples)
+        phase = t_seconds * (2 * np.pi / drift_period)
+        wave = sawtooth(phase, width=0.5)
+        # -1 to 1 and back to -1, so divide by 4 to have 2*ptp=drift_speed*drift_period.
+        return wave * (drift_speed * drift_period / 4.0)
 
-    def templates(self, t_samples=None, *, up=False, padded=False, pad_value=np.nan):
-        drift = 0 if t_samples is None else self.drift(t_samples)
-        pos, templates, offsets = self.template_simulator.templates(
-            drift=drift, up=up, padded=padded, pad_value=pad_value
-        )
-        templates = templates.astype(self.features_dtype)
-        tunpad = templates[..., :-1] if padded else templates
-        if up:
-            assert tunpad.shape == self.template_shape_up
-        else:
-            assert tunpad.shape == self.template_shape
+    panic(drift_type)
 
-        return pos, templates, offsets
 
-    def get_spikes(
-        self,
-        noise_with_margin,
-        start_frame,
-        end_frame,
-        *,
-        in_chunk_only=True,
-        extract=False,
-        n_residual_snips=0,
-    ):
-        if in_chunk_only:
-            search_start = start_frame
-            search_end = end_frame
-        else:
-            search_start = start_frame - self.spike_safe_pad
-            search_end = end_frame + self.spike_safe_pad
-        i0 = np.searchsorted(self.times_samples, search_start)
-        i1 = np.searchsorted(self.times_samples, search_end)
-        t = self.times_samples[i0:i1]
-        ll = self.labels[i0:i1]
-        s = self.scalings[i0:i1]
-        u = self.jitter_ix[i0:i1]
+def simulate_motion(
+    recording: BaseRecording,
+    *,
+    drift_type: Literal["line", "triangle"],
+    drift_speed: float,
+    drift_period: float,
+) -> MotionInfo:
+    """Rigid MotionInfo describing the simulated drift, binned at 1s."""
+    assert drift_type in ("line", "triangle")
+    geom = recording.get_channel_locations()
+    if not drift_speed:
+        return MotionInfo.from_motion_est(geom=geom)
 
-        # temporal indices of snippets relative to chunk
-        t_rel = t - (start_frame - self.margin)
-        tix = t_rel[:, None] + self.snippet_time_ix
-        tc = (start_frame + end_frame) / 2
-        pos, temps, offsets = self.templates(t_samples=tc, up=True, padded=extract)
-        temps = temps[ll, u]
-        temps *= s[:, None, None]
-        temps_unpad = temps[..., :-1] if extract else temps
-        offsets = offsets[ll, u]
-
-        spikes = dict(
-            i0=i0,
-            i1=i1,
-            times_samples=t + offsets,
-            time_shifts=offsets.astype(np.int16),
-            labels=ll,
-            scalings=s,
-            jitter_ix=u,
-            tix=tix,
-            waveforms=temps_unpad,
-            n_residual_snips=n_residual_snips,
-        )
-        if not extract:
-            return spikes
-
-        spikes["localizations"] = pos[ll]
-        spikes["displacements"] = np.full(
-            i1 - i0, self.drift(tc), dtype=self.features_dtype
-        )
-        ptp_vectors = ptp(temps_unpad, dim=1)
-        c = ptp_vectors.argmax(axis=1)
-        spikes["channels"] = c
-        spikes["ptp_amplitudes"] = ptp_vectors.max(axis=1)
-        if n_residual_snips:
-            rsnips, rtimes = extract_random_snips(
-                rg=self.random_seed,
-                chunk=noise_with_margin[
-                    self.margin : len(noise_with_margin) - self.margin
-                ],
-                n=n_residual_snips,
-                sniplen=self.spike_length_samples,
-            )
-            if torch.is_tensor(rsnips):
-                rsnips = rsnips.numpy(force=True)
-            spikes["residual"] = rsnips
-            rtimes += start_frame
-            rtimes = self.sample_index_to_time(rtimes)
-            spikes["residual_times"] = rtimes
-            spikes["n_residual_snips"] = rtimes.shape[0]
-
-        # extract the background noise which waveforms will be added into
-        noise_padded = np.pad(
-            noise_with_margin, [(0, 0), (0, 1)], constant_values=np.nan
-        )
-        echans = self.extract_channel_index[c]
-        if torch.is_tensor(echans):
-            echans = echans.numpy(force=True)
-        noise_waveforms = noise_padded[tix[:, :, None], echans[:, None, :]]
-        # the actual injected waveforms...
-        injected_waveforms = np.take_along_axis(temps, echans[:, None, :], axis=2)
-        collisioncleaned_waveforms = noise_waveforms + injected_waveforms
-
-        spikes["noise_waveforms"] = noise_waveforms
-        spikes["injected_waveforms"] = injected_waveforms
-        spikes["collisioncleaned_waveforms"] = collisioncleaned_waveforms
-        spikes["collidedness"] = np.ones(
-            len(collisioncleaned_waveforms), dtype=collisioncleaned_waveforms.dtype
-        )
-        spikes["echans"] = echans
-
-        return spikes
-
-    def get_traces_and_inject_spikes(
-        self,
-        start_frame,
-        end_frame,
-        channel_indices=None,
-        *,
-        extract=False,
-        inject=False,
-        n_residual_snips=0,
-    ):
-        traces, lm, rm = get_chunk_with_margin(
-            self.parent_recording_segment,
-            start_frame=start_frame,
-            end_frame=end_frame,
-            channel_indices=None,
-            margin=self.margin,
-            add_zeros=True,
-        )
-        assert lm == rm == self.margin
-        assert traces.shape[1] == self.n_channels
-        assert extract != inject
-        spikes = self.get_spikes(
-            traces,
-            start_frame,
-            end_frame,
-            in_chunk_only=not inject,
-            extract=extract,
-            n_residual_snips=n_residual_snips,
-        )
-
-        if not inject and not self.compute_collision_waveforms:
-            return traces, spikes
-
-        waveforms = cast(np.ndarray, spikes["waveforms"])
-        tix = cast(np.ndarray, spikes["tix"])
-        waveforms = waveforms.astype(traces.dtype, copy=False)
-        traces = traces.copy()
-        np.add.at(traces, (tix[:, :, None], self.chans_arange[None, None]), waveforms)
-
-        if self.compute_collision_waveforms and not inject:
-            echans = cast(np.ndarray, spikes["echans"])
-            traces_pad = np.pad(traces, [(0, 0), (0, 1)], constant_values=np.nan)
-            cwfs = traces_pad[tix[:, :, None], echans[:, None, :]]
-            cwfs -= spikes["collisioncleaned_waveforms"]
-            spikes["collision_waveforms"] = cwfs
-            cwfs = np.nan_to_num(cwfs).reshape(len(cwfs), -1)
-            # collidedness is what's relevant to the features, which are perfectly
-            # decollided. gt_collidedness is worst case (no cc).
-            spikes["gt_collidedness"] = np.linalg.norm(cwfs, axis=1)
-
-        traces = traces[self.margin : len(traces) - self.margin]
-        if channel_indices is not None:
-            traces = traces[:, channel_indices]
-
-        return traces, spikes
-
-    def _get_traces_and_inject_spikes_job(self, args_kwargs):
-        args, kwargs = args_kwargs
-        return self.get_traces_and_inject_spikes(*args, **kwargs)
-
-    def get_traces(self, start_frame, end_frame, channel_indices):
-        traces, _ = self.get_traces_and_inject_spikes(
-            start_frame, end_frame, channel_indices, inject=True
-        )
-        return traces
+    segment = recording._recording_segments[0]
+    duration_s = np.ceil(segment.get_end_time() - segment.get_start_time())
+    t = np.arange(duration_s)
+    time_bin_centers = t + 0.5 * np.diff(t).mean()
+    tbc_samples = time_bin_centers * recording.sampling_frequency
+    displacement = simulate_drift(
+        recording,
+        tbc_samples,
+        drift_type=drift_type,
+        drift_speed=drift_speed,
+        drift_period=drift_period,
+    )
+    dredge_me = motion_util.get_motion_estimate(
+        displacement=displacement, time_bin_centers_s=time_bin_centers
+    )
+    return MotionInfo.from_motion_est(geom=geom, dredge_motion_est=dredge_me)

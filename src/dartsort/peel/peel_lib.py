@@ -2,7 +2,7 @@ import warnings
 from collections import namedtuple
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import torch
@@ -19,8 +19,7 @@ from ..util.internal_config import (
     WaveformConfig,
 )
 from ..util.job_util import ensure_computation_config
-from ..util.py_util import panic
-from ..util.spiketorch import grab_spikes, ptp, subtract_spikes_
+from ..util.spiketorch import grab_spikes, subtract_spikes_
 from ..util.torch_util import torch_compile
 from ..util.waveform_util import get_relative_subset, make_channel_index
 from .peel_base import PeelingBatchResult
@@ -849,7 +848,7 @@ def threshold_to_fit(
         n_resid_snips = None
 
     if tmp_dir is None:
-        tmp_dir = computation_cfg.tmpdir_parent
+        tmp_dir = computation_cfg.maybe_tmpdir_parent()
     with TemporaryDirectory(dir=tmp_dir) as temp_dir:
         temp_hdf5_filename = Path(temp_dir) / "subtraction_denoiser0_fit.h5"
         try:

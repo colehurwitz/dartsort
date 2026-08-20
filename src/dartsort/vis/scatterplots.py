@@ -8,6 +8,8 @@ from ..clustering.clustering_features import SimpleMatrixFeatures
 from ..clustering.density import kdtree_inliers
 from .colors import glasbey1024
 
+default_scatter_kw = dict(s=5, marker="s", color="k", lw=0)
+
 
 def scatter_spike_features(
     hdf5_filename=None,
@@ -26,7 +28,7 @@ def scatter_spike_features(
     figsize=(15, 10),
     semilog_amplitudes=True,
     show_geom=True,
-    geom_scatter_kw=dict(s=5, marker="s", color="k", lw=0),
+    geom_scatter_kw=default_scatter_kw,
     amplitude_color_cutoff=15.0,
     amplitude_cmap="viridis",
     max_spikes_plot=500_000,
@@ -139,7 +141,7 @@ def scatter_spike_features(
     if remove_outliers:
         assert amplitudes is not None
         a = 50 * np.log(amplitudes + 5)
-        inliers, kdtree = kdtree_inliers(np.c_[depths_um, x, a][to_show])
+        inliers, _kdtree = kdtree_inliers(np.c_[depths_um, x, a][to_show])
         to_show = to_show[inliers]
     _, s_x = scatter_x_vs_depth(
         x=x,
@@ -436,7 +438,7 @@ def scatter_x_vs_depth(
     times_s=None,
     labels=None,
     show_geom=True,
-    geom_scatter_kw=dict(s=5, marker="s", color="k", lw=0),
+    geom_scatter_kw=default_scatter_kw,
     geom=None,
     probe_margin_um=100,
     ax=None,
@@ -694,7 +696,7 @@ def scatter_feature_vs_depth(
             c = c[labels[to_show] >= 0]
             to_show = to_show[labels[to_show] >= 0]
     else:
-        assert False
+        raise AssertionError()
 
     feature = feature[to_show]
     depths_um = depths_um[to_show]
@@ -797,7 +799,7 @@ def add_ellipses(
         if not bad:
             # remove outliers to stabilize [co]variance
             kdt = KDTree(np.c_[f[valid], d[valid]])  # type: ignore
-            dd, ii = kdt.query(np.c_[f[valid], d[valid]], distance_upper_bound=10.0)  # type: ignore
+            _dd, ii = kdt.query(np.c_[f[valid], d[valid]], distance_upper_bound=10.0)  # type: ignore
             valid = valid[ii < kdt.n]  # type: ignore
             bad = valid.size <= 2
         if not bad:

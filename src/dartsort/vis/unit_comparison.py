@@ -17,6 +17,7 @@ except ImportError:
         raise ImportError("`matplotlib_venn` is needed for venn plots.")
 
 
+from ..util.py_util import panic
 from .analysis_plots import correlogram, stackbar
 from .colors import glasbey1024
 from .layout import BasePlot
@@ -310,7 +311,7 @@ class MatchRawWaveformsPlot(UnitComparisonPlot):
             # dict above
             self.randomize = False
         else:
-            assert False
+            panic(order)
         self.order = order
 
         self.kind = "traces" if single_channel else "waveforms"
@@ -491,10 +492,10 @@ class NearbyTemplates(UnitComparisonPlot):
 
     def draw(self, panel, comparison, unit_id):
         try:
-            neighb_ixs, neighb_ids, templates = self.neighbors(
+            _neighb_ixs, neighb_ids, templates = self.neighbors(
                 comparison, unit_id, which=self.which
             )
-        except Exception:
+        except ValueError:
             neighbor_error_panel(self, panel, unit_id)
             return
         # reverse so matched/gt unit comes last for draw order
@@ -516,7 +517,7 @@ class NearbyTemplates(UnitComparisonPlot):
             colors = list(glasbey1024[neighb_ids[:-1] % len(glasbey1024)]) + ["k"]
             labels = list(map(str, neighb_ids))
         else:
-            assert False
+            panic(self.which)
 
         max_chan = comparison.gt_analysis.unit_max_channel(unit_id)
         geom = comparison.gt_analysis.registered_geom
@@ -527,7 +528,7 @@ class NearbyTemplates(UnitComparisonPlot):
         ax = panel.subplots()
         maa = np.nanmax(np.abs(gt_template))
         handles = []
-        for t, c in zip(templates, colors):
+        for t, c in zip(templates, colors, strict=True):
             ls = "-"
             if isinstance(c, str) and c == "k":
                 ls = (0, (1, 1))
@@ -579,7 +580,7 @@ class NearbyTemplatesDistanceMatrix(UnitComparisonPlot):
             gt_neighb_ixs, gt_neighb_ids, _ = self.neighbors(
                 comparison, unit_id, which="gt"
             )
-        except Exception:
+        except ValueError:
             neighbor_error_panel(self, panel, unit_id, which="gt")
             return
         tested_neighb_ixs, tested_neighb_ids, _ = self.neighbors(
@@ -606,7 +607,7 @@ class NearbyTemplatesDistanceMatrix(UnitComparisonPlot):
         ax.set_xlabel(f"{comparison.tested_name} unit")
         ax.set_yticks(range(len(dists)), gt_neighb_ids)
         ax.set_xticks(range(len(dists.T)), tested_neighb_ids, rotation="vertical")
-        for t, ix in zip(ax.get_xticklabels(), tested_neighb_ids):
+        for t, ix in zip(ax.get_xticklabels(), tested_neighb_ids, strict=False):
             t.set_color(glasbey1024[int(ix) % len(glasbey1024)])
         ns = _nmeth_names[self.neighbor_method]
         ax.set_title(f"{ns} temp dist")
@@ -631,13 +632,13 @@ class NearbyTemplatesConfusionMatrix(UnitComparisonPlot):
 
     def draw(self, panel, comparison, unit_id):
         try:
-            gt_neighb_ixs, gt_neighb_ids, _ = self.neighbors(
+            _gt_neighb_ixs, gt_neighb_ids, _ = self.neighbors(
                 comparison, unit_id, which="gt"
             )
-        except Exception:
+        except ValueError:
             neighbor_error_panel(self, panel, unit_id, which="gt")
             return
-        tested_neighb_ixs, tested_neighb_ids, _ = self.neighbors(
+        _tested_neighb_ixs, tested_neighb_ids, _ = self.neighbors(
             comparison, unit_id, which="tested"
         )
 
@@ -657,7 +658,7 @@ class NearbyTemplatesConfusionMatrix(UnitComparisonPlot):
             conf_rows = gt_neighb_ids
             conf_cols = tested_neighb_ids
         else:
-            assert False
+            panic(self.confusion_kind)
 
         if self.confusion_kind.startswith("si"):
             conf = conf[conf.index != "FP"].sort_index()
@@ -699,7 +700,9 @@ class NearbyTemplatesConfusionMatrix(UnitComparisonPlot):
         if not conf.size:
             return
         if conf.min() < -1e-3:
-            warnings.warn(f"Large {conf.min()=} with {self.confusion_kind=}.")
+            warnings.warn(
+                f"Large {conf.min()=} with {self.confusion_kind=}.", stacklevel=2
+            )
         conf = np.abs(np.clip(conf, 0.0, None))
         if not np.isfinite(conf).all():
             suffix += " [had infs!]"
@@ -718,7 +721,7 @@ class NearbyTemplatesConfusionMatrix(UnitComparisonPlot):
         ax.set_yticks(range(len(conf)), gt_neighb_ids)
         if len(tested_neighb_ids):
             ax.set_xticks(range(len(conf.T)), tested_neighb_ids, rotation="vertical")
-            for t, ix in zip(ax.get_xticklabels(), tested_neighb_ids):
+            for t, ix in zip(ax.get_xticklabels(), tested_neighb_ids, strict=False):
                 t.set_color(glasbey1024[int(ix) % len(glasbey1024)])
 
 
@@ -787,8 +790,8 @@ class NeighborCCGBreakdown(UnitComparisonPlot):
 
     def _draw(self, panel, comparison, unit_id, tested_unit_id):
         try:
-            ixs, ids, _ = self.neighbors(comparison, unit_id, n=self.n_neighbors + 1)
-        except Exception:
+            _ixs, ids, _ = self.neighbors(comparison, unit_id, n=self.n_neighbors + 1)
+        except ValueError:
             neighbor_error_panel(self, panel, unit_id, tested_unit_id)
             return
         if self.which == "gt":
@@ -804,11 +807,11 @@ class NeighborCCGBreakdown(UnitComparisonPlot):
 
         axes = panel.subplots(nrows=len(self.categories), sharex=True)
         h = 1.5 * len(self.categories)
-        for cat, ax in zip(self.categories, axes.flat):
+        for cat, ax in zip(self.categories, axes.flat, strict=False):
             cat_st = cat_spikes[f"{cat}_times_samples"]
             ccgs = []
             clags = None
-            for u, vst in vsts.items():
+            for vst in vsts.values():
                 clags, ccg = correlogram(cat_st, vst, max_lag=self.max_lag)
                 ccgs.append(ccg)
             assert clags is not NotImplemented
@@ -900,7 +903,7 @@ class CollidednessBreakdown(UnitComparisonPlot):
             bins = np.linspace(mn, mx, self.n_bins + 1)
 
         labels = ["tp", "fn", "unsorted_fn"]
-        labels = [ll for ll, c in zip(labels, colls) if c.size]
+        labels = [ll for ll, c in zip(labels, colls, strict=False) if c.size]
         colls = [c for c in colls if c.size]
         colors = [_class_colors[k] for k in labels]
         ax.hist(

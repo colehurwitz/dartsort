@@ -24,7 +24,7 @@ from ..util.data_util import DARTsortSorting
 from ..util.internal_config import ComputationConfig, unshifted_raw_template_cfg
 from ..util.logging_util import progbar
 from ..util.motion import MotionInfo
-from ..util.py_util import ensure_path
+from ..util.py_util import ensure_path, panic
 from . import analysis, comparison, simkit
 
 logger = getLogger(__name__)
@@ -147,8 +147,14 @@ def precompute_displaced_registered_templates(
 
 
 def closest_clustering(
-    gt_st, peel_st, geom=None, match_dt_ms=0.1, match_radius_um=0.0, p=2.0
+    gt_st: DARTsortSorting,
+    peel_st: DARTsortSorting,
+    geom: np.ndarray | None = None,
+    match_dt_ms=0.1,
+    match_radius_um=0.0,
+    p=2.0,
 ):
+    assert gt_st.labels is not None
     frames_per_ms = gt_st.sampling_frequency / 1000
     delta_frames = match_dt_ms * frames_per_ms
     rescale = [delta_frames]
@@ -172,8 +178,8 @@ def closest_clustering(
 
 
 def greedy_match(
-    gt_coords,
-    test_coords,
+    gt_coords: np.ndarray,
+    test_coords: np.ndarray,
     max_val=1.0,
     dx=1.0 / 30,
     workers=-1,
@@ -304,10 +310,10 @@ def greedy_match_counts(
 
 
 def sorting_from_times_labels(
-    times_samples,
-    labels,
-    recording=None,
-    motion=None,
+    times_samples: np.ndarray,
+    labels: np.ndarray,
+    recording: BaseRecording | None = None,
+    motion: MotionInfo | None = None,
     sampling_frequency=30000.0,
     determine_channels=True,
     template_cfg=unshifted_raw_template_cfg,
@@ -353,7 +359,7 @@ def sorting_from_times_labels(
         guess_pos = motion.rgeom[channels]
         times_seconds = recording.sample_index_to_time(times_samples)
         # anti-correct these already stable positions so that they start movin
-        guess_pos[:, 1] += motion.disp_at_s(times_seconds, depth_um=guess_pos[:, 1])
+        guess_pos[:, 1] += motion.disp_at_s(times_seconds, depths_um=guess_pos[:, 1])
 
         # closest original channels to shifted positions
         # these positions can drift off the probe if the main channel does! so in that case
@@ -368,16 +374,16 @@ def sorting_from_times_labels(
 
 
 def sorting_from_spikeinterface(
-    sorting,
-    recording=None,
-    determine_channels=True,
+    sorting: BaseSorting,
+    recording: BaseRecording | None = None,
+    determine_channels: bool = True,
     template_cfg=unshifted_raw_template_cfg,
     n_jobs=0,
 ):
     sv = sorting.to_spike_vector()
     return sorting_from_times_labels(
-        sv["sample_index"],
-        sv["unit_index"],
+        sv["sample_index"],  # ty: ignore[invalid-argument-type]
+        sv["unit_index"],  # ty: ignore[invalid-argument-type]
         sampling_frequency=sorting.sampling_frequency,
         recording=recording,
         determine_channels=determine_channels,
@@ -391,7 +397,7 @@ def _same(x):
 
 
 def load_dartsort_step_sortings(
-    sorting_dir,
+    sorting_dir: str | Path,
     load_simple_features=False,
     load_feature_names=("times_seconds", "geom", "channel_index", "template_inds"),
     motion_h5_name="motionthreshold.h5",
@@ -534,7 +540,7 @@ def load_dartsort_step_sortings(
             elif npx.name.endswith(".npz"):
                 yield (name_formatter(stem), DARTsortSorting.load(npx))
             else:
-                assert False
+                panic(npx.name)
 
     if no_npys and dartsort_sorting_npz.exists():
         yield "dartsort", DARTsortSorting.load(dartsort_sorting_npz)

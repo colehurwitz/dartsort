@@ -4,6 +4,7 @@ from logging import (
     DEBUG,
     INFO,
     NOTSET,
+    WARNING,
     addLevelName,
     getLevelNamesMapping,
     getLogger,
@@ -22,9 +23,8 @@ addLevelName(DARTSORTVERBOSE, "DSVERBOSE")
 DARTSORTDEBUG = DEBUG + 5
 addLevelName(DARTSORTDEBUG, "DSDEBUG")
 
-
-DOUBLECHECK = DEBUG + 6
-addLevelName(DOUBLECHECK, "DOUBLECHECK")
+DARTSORTIMPORTANT = WARNING
+addLevelName(DARTSORTIMPORTANT, "dartsort")
 
 
 klass = getLoggerClass()
@@ -34,9 +34,9 @@ class DARTsortLogger(klass):
     def __init__(self, name, level=NOTSET):
         super().__init__(name, level)
 
-    def doublecheck(self, msg, *args, **kwargs):
-        if self.isEnabledFor(DOUBLECHECK):
-            self._log(DOUBLECHECK, msg, args, stacklevel=2, **kwargs)
+    def important(self, msg, *args, **kwargs):
+        if self.isEnabledFor(DARTSORTIMPORTANT):
+            self._log(DARTSORTIMPORTANT, msg, args, stacklevel=2, **kwargs)
 
     def dartsortverbose(self, msg, *args, **kwargs):
         if self.isEnabledFor(DARTSORTVERBOSE):
@@ -71,7 +71,7 @@ def set_log_level(level: int | str):
     elif isinstance(level, int):
         ilevel = level
     else:
-        assert False
+        raise TypeError(f"Can't handle {level} ({type(level)})")
     package_logger.setLevel(ilevel)
     package_logger.log(ilevel, f"Log level set to {level}.")
 
@@ -116,7 +116,7 @@ package_logger.dartsortdebug(
 )
 
 
-class logress:
+class logress:  # noqa: N801
     def __init__(
         self,
         iterable,

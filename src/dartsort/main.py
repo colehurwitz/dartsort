@@ -2,6 +2,7 @@
 
 import traceback
 from collections.abc import Sequence
+from contextlib import nullcontext
 from importlib.metadata import version
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -53,6 +54,7 @@ from .util.main_util import (
     DARTsortResult,
     _matching_step_cfgs,
     ds_all_to_workdir,
+    ds_check_motion,
     ds_dump_config,
     ds_fast_forward,
     ds_handle_delete_intermediate_features,
@@ -62,6 +64,7 @@ from .util.main_util import (
     ds_save_intermediate_labels,
     ds_save_motion,
     ds_save_timing,
+    ds_will_copy_recording,
     motion_needs_peaks,
 )
 from .util.motion import MotionInfo, get_motion_info
@@ -136,76 +139,59 @@ def dartsort(
     ds_handle_link_from(cfg, output_dir)
 
     # preprocess
+    copy_rec_flag = ds_will_copy_recording(cfg)
     recording = preprocess(recording, cfg.preprocessing, cfg.preprocessing_dtype)
-    check_recording(recording)
+    check_recording(recording, copy_flag=copy_rec_flag)
 
-    if cfg.work_in_tmpdir:
-        with TemporaryDirectory(prefix="dartsort", dir=cfg.tmpdir_parent) as work_dir:
-            # copy files and possibly recording to temporary directory
-            work_dir = ensure_path(work_dir)
-            logger.dartsortdebug(f"Working in {work_dir}, outputs to {output_dir}.")
-            recording, work_dir = ds_all_to_workdir(
-                internal_cfg=cfg,
-                output_dir=output_dir,
-                work_dir=work_dir,
-                recording=recording,
-                overwrite=overwrite,
-            )
-            assert work_dir is not None
-
-            # run the sorter, with extra error handlers for grabbing stuff from
-            # the temporary directory if user asked for that.
-            try:
-                return _dartsort_impl(
-                    recording=recording,
-                    output_dir=output_dir,
-                    cfg=cfg,
-                    motion=motion,
-                    si_motion=si_motion,
-                    dredge_motion_est=dredge_motion_est,
-                    work_dir=work_dir,
-                    overwrite=overwrite,
-                )
-            except Exception as e:
-                traceback_path = output_dir / "traceback.txt"
-                error_data_path = output_dir / "error_state"
-                with traceback_path.open("w") as f:
-                    traceback.print_exception(e, file=f)
-                logger.exception(e)
-                if cfg.save_everything_on_error:
-                    logger.critical(
-                        f"Hit an error. Copying outputs to {error_data_path} "
-                        f"and writing traceback to {traceback_path}."
-                    )
-                    dartcopytree(cfg, work_dir, error_data_path)
-                else:
-                    logger.critical(
-                        f"Hit an error. Writing traceback to {traceback_path}."
-                        " work_in_tmpdir was true, so the files won't be kept."
-                        " Set save_everything_on_error to keep them."
-                    )
-                raise
-
-    # run the sorter regular with no tempdir, log exception to a
-    # traceback file in case of a crash for debugging
-    try:
-        return _dartsort_impl(
-            recording=recording,
+    needs_dir = copy_rec_flag or cfg.work_in_tmpdir
+    with (
+        TemporaryDirectory(prefix="dartsort", dir=cfg.maybe_tmpdir_parent())
+        if needs_dir
+        else nullcontext()
+    ) as work_dir:
+        # copy files and possibly recording to temporary directory
+        work_dir = ensure_path(work_dir) if needs_dir else None
+        logger.dartsortdebug(f"Working in {work_dir}, outputs to {output_dir}.")
+        recording, work_dir = ds_all_to_workdir(
+            internal_cfg=cfg,
             output_dir=output_dir,
-            cfg=cfg,
-            motion=motion,
-            si_motion=si_motion,
-            dredge_motion_est=dredge_motion_est,
-            work_dir=None,
+            work_dir=work_dir,
+            recording=recording,
             overwrite=overwrite,
         )
-    except Exception as e:
-        traceback_path = output_dir / "traceback.txt"
-        with traceback_path.open("w") as f:
-            traceback.print_exception(e, file=f)
-        logger.exception(e)
-        logger.critical(f"Hit an error. Wrote traceback to {traceback_path}.")
-        raise
+
+        # run the sorter, with extra error handlers for grabbing stuff from
+        # the temporary directory if user asked for that.
+        try:
+            return _dartsort_impl(
+                recording=recording,
+                output_dir=output_dir,
+                cfg=cfg,
+                motion=motion,
+                si_motion=si_motion,
+                dredge_motion_est=dredge_motion_est,
+                work_dir=work_dir,
+                overwrite=overwrite,
+            )
+        except Exception as e:
+            traceback_path = output_dir / "traceback.txt"
+            error_data_path = output_dir / "error_state"
+            with traceback_path.open("w") as f:
+                traceback.print_exception(e, file=f)
+            logger.exception(e)
+            if cfg.save_everything_on_error:
+                logger.critical(
+                    f"Hit an error. Copying outputs to {error_data_path} "
+                    f"and writing traceback to {traceback_path}."
+                )
+                dartcopytree(cfg, work_dir, error_data_path)
+            else:
+                logger.critical(
+                    f"Hit an error. Writing traceback to {traceback_path}."
+                    " work_in_tmpdir was true, so the files won't be kept."
+                    " Set save_everything_on_error to keep them."
+                )
+            raise
 
 
 def _dartsort_impl(
@@ -232,9 +218,11 @@ def _dartsort_impl(
     # TODO uhh. overwrite, right?
     next_step, sorting, _motion = ds_fast_forward(store_dir, cfg)
     if motion is not None:
-        pass
+        ds_check_motion(recording, motion)
     elif (si_motion is None) and (dredge_motion_est is None):
         motion = _motion
+        if motion is not None:
+            ds_check_motion(recording, motion)
     else:
         motion = MotionInfo.from_motion_est(
             geom=recording.get_channel_locations(),
@@ -257,7 +245,9 @@ def _dartsort_impl(
             _save_cfg=cfg,
             _save_dir=output_dir,
         )
-    ret["motion"] = motion
+    if motion is not None:
+        ds_save_motion(motion, output_dir, work_dir, overwrite)
+        ret["motion"] = motion
 
     is_subsampling = cfg.subsampling_spikes_per_channel is not None
     is_subsampling = is_subsampling and cfg.subsampling_presence != 1.0
@@ -270,6 +260,7 @@ def _dartsort_impl(
                 recording=recording,
                 cfg=cfg,
                 overwrite=overwrite,
+                # note: usually motion=None here, except in certain benchmark comparisons
                 motion=motion,
                 load_simple_features=False,
             )
@@ -342,6 +333,7 @@ def _dartsort_impl(
     for step in range(next_step, cfg.matching_iterations + 1):
         is_final = step == cfg.matching_iterations
 
+        # next few lines say: please subsample if not the final step
         if step == 0:
             panic(step)
         elif step == 1:

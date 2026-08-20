@@ -81,6 +81,7 @@ class TemplateWaveformReducer(BaseWaveformFeaturizer):
             batch_xsqbar = None
 
         # sum weight per unit
+        # TODO this isn't hit by any code. but it could be if weighting was a thing.
         if "weights" in spike_data:
             weights = spike_data["weights"]
         else:

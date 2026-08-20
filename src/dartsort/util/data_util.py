@@ -31,6 +31,8 @@ from .internal_config import (
 from .logging_util import get_logger, progbar
 
 if TYPE_CHECKING:
+    from pynapple import TsGroup
+
     from ..clustering.mixture import Scores
     from ..templates.templates import TemplateData
     from .motion import MotionInfo
@@ -202,10 +204,10 @@ class DARTsortSorting:
 
     def to_tsgroup(
         self,
-        metadata=None,
-        add_feature_mean_metadata=True,
+        metadata: dict | None = None,
+        add_feature_mean_metadata: bool = True,
         weight_key="soft_assignment_weight",
-    ):
+    ) -> "TsGroup":
         """Export to pynapple.TsGroup.
 
         If there is a weight_key feature, this will produce
@@ -409,7 +411,7 @@ class DARTsortSorting:
 
         return si_structured_localizations_array(locs)
 
-    def permute_labels(self, seed=0):
+    def permute_labels(self, seed=0) -> Self:
         assert self.labels is not None
         rg = np.random.default_rng(seed)
         return self.ephemeral_replace(labels=rg.permutation(self.labels))
@@ -888,7 +890,7 @@ class DARTsortSorting:
             ephemeral_features=eph,
         )
 
-    def ensure_no_missing(self):
+    def ensure_no_missing(self) -> Self:
         assert self.labels is not None
         no_missing = np.all(self.labels >= 0)
         if "mask_indices" in self._ephemeral_features:
@@ -1070,7 +1072,9 @@ class DARTsortSorting:
                 dset = batched_h5_read(dataset=dset, indices=m, show_progress=False)
             return dset[sl]
 
-    def _yield_dataset(self, dataset_name: str, batch_size: int = 1024):
+    def _yield_dataset(
+        self, dataset_name: str, batch_size: int = 1024
+    ) -> Generator[np.ndarray]:
         assert self.parent_h5_path is not None
         with h5py.File(self.parent_h5_path, "r", locking=False) as h5:
             dset = h5[dataset_name]
@@ -1412,12 +1416,12 @@ def filter_link_h5(in_h5_path: str | Path, out_h5_path: str | Path, keep_filter)
             h5out[k] = h5py.ExternalLink(in_h5_path, k)
 
 
-def get_labels(h5_path) -> np.ndarray:
+def get_labels(h5_path: str | Path) -> np.ndarray:
     with h5py.File(h5_path, "r") as h5:
         return h5["labels"][:]
 
 
-def get_residual_snips(h5_path) -> np.ndarray:
+def get_residual_snips(h5_path: str | Path) -> np.ndarray:
     with h5py.File(h5_path, "r", locking=False) as h5:
         nr = h5["n_residuals"][()]
         return h5["residual"][:nr]
@@ -1434,15 +1438,6 @@ def sorting_isis(sorting: DARTsortSorting):
         isi = np.minimum(isi[1:], isi[:-1])
         isis_ms[inu] = isi
     return isis_ms
-
-
-def get_top_assignment_weights(
-    sorting: DARTsortSorting,
-    responsibilities_key="gmm_responsibilities",
-    candidates_key="gmm_candidates",
-) -> np.ndarray:
-    assert sorting.labels is not None
-    raise NotImplementedError  # TODO
 
 
 def merged_responsibilities(
@@ -1608,6 +1603,7 @@ def candidates_to_labels(clabels, labels, Klabel, Kcand):
 
 def check_recording(
     rec: BaseRecording,
+    copy_flag: bool | None = None,
     threshold=5,
     dedup_spatial_radius=75,
     expected_value_range=1e4,
@@ -1711,21 +1707,23 @@ def check_recording(
     if log and not rec.binary_compatible_with(
         file_offset=0, time_axis=0, file_paths_length=1
     ):
-        warnings.warn(
-            "Your (preprocessed) recording is not saved on disk in time-major "
-            "format, so reading data could be slow. You could set the config "
-            "flag copy_recording_to_tmpdir to keep it in a scratch folder "
-            "while dartsort runs, or cache it long-term with its .save() method.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
+        if copy_flag is not None and not copy_flag:
+            warnings.warn(
+                "Your (preprocessed) recording is not saved on disk in time-major "
+                "format, so reading data could be slow. You could set the config "
+                "flag copy_recording_to_tmpdir to keep it in a scratch folder "
+                "while dartsort runs, or cache it long-term with its .save() method.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
     return failed, avg_detections_per_second, max_abs, std
 
 
 def subsample_to_max_count(
-    sorting, max_spikes=256, seed: int | np.random.Generator = 0
-):
+    sorting: DARTsortSorting, max_spikes=256, seed: int | np.random.Generator = 0
+) -> DARTsortSorting:
+    assert sorting.labels is not None
     units, counts, _ = pos_int_unique_and_counts(sorting.labels)
     if counts.max() <= max_spikes:
         return sorting
@@ -1741,7 +1739,14 @@ def subsample_to_max_count(
     return sorting.ephemeral_replace(labels=new_labels)
 
 
-def restrict_to_valid_times(sorting, recording, waveform_cfg, pad=0):
+def restrict_to_valid_times(
+    sorting: DARTsortSorting,
+    recording: BaseRecording,
+    waveform_cfg: WaveformConfig,
+    pad=0,
+) -> DARTsortSorting:
+    if sorting.labels is None:
+        return sorting
     trough = waveform_cfg.trough_offset_samples(recording.sampling_frequency)
     total = waveform_cfg.spike_length_samples(recording.sampling_frequency)
     t_min = trough + pad
@@ -1753,13 +1758,13 @@ def restrict_to_valid_times(sorting, recording, waveform_cfg, pad=0):
 
 
 def subsample_by_count_and_valid_time(
-    sorting,
+    sorting: DARTsortSorting,
     *,
     max_spikes: int,
     seed: int | np.random.Generator = 0,
     recording,
     waveform_cfg,
-):
+) -> DARTsortSorting:
     # valid time mask
     trough = waveform_cfg.trough_offset_samples(recording.sampling_frequency)
     total = waveform_cfg.spike_length_samples(recording.sampling_frequency)
@@ -1784,8 +1789,12 @@ def subsample_by_count_and_valid_time(
 
 
 def subset_sorting_by_time_samples(
-    sorting, start_sample=0, end_sample=np.inf, reference_to_start_sample=True
-):
+    sorting: DARTsortSorting,
+    start_sample=0,
+    end_sample=np.inf,
+    reference_to_start_sample=True,
+) -> DARTsortSorting:
+    assert sorting.labels is not None
     new_times = sorting.times_samples.copy()
     new_labels = sorting.labels.copy()
 
@@ -1798,7 +1807,10 @@ def subset_sorting_by_time_samples(
     return sorting.ephemeral_replace(labels=new_labels, times_samples=new_times)
 
 
-def subset_sorting_by_time_seconds(sorting, t_start=0, t_end=np.inf):
+def subset_sorting_by_time_seconds(
+    sorting: DARTsortSorting, t_start=0.0, t_end=np.inf
+) -> DARTsortSorting:
+    assert sorting.labels is not None
     new_labels = sorting.labels.copy()
     t_s = sorting.times_seconds
     in_range = t_s == t_s.clip(t_start, t_end)
@@ -1883,14 +1895,22 @@ def chunk_time_ranges(recording, chunk_length_samples=None):
 # -- hdf5 util
 
 
-def batched_h5_read(dataset, indices=None, mask=None, show_progress=False):
+def batched_h5_read(
+    dataset: h5py.Dataset,
+    indices: np.ndarray | None = None,
+    mask: np.ndarray | None = None,
+    show_progress: bool = False,
+) -> np.ndarray:
     if mask is None:
+        assert slice is not None
         mask = np.zeros(len(dataset), dtype=bool)
         mask[indices] = 1
     return _read_by_chunk(mask, dataset, show_progress=show_progress)
 
 
-def _read_by_chunk(mask, dataset, show_progress=True):
+def _read_by_chunk(
+    mask: np.ndarray, dataset: h5py.Dataset, show_progress=True
+) -> np.ndarray:
     """
     mask : boolean array of shape dataset.shape[:1]
     dataset : chunked h5py.Dataset
@@ -1913,7 +1933,7 @@ def _read_by_chunk(mask, dataset, show_progress=True):
 def yield_chunks(
     dataset: h5py.Dataset | np.ndarray,
     show_progress=True,
-    desc_prefix=None,
+    desc_prefix: str | None = None,
     fallback_chunk_length=4096,
 ) -> Generator[tuple[slice, np.ndarray], None, None]:
     """Iterate chunks of an h5py dataset (or np.ndarray)
@@ -1959,7 +1979,7 @@ def yield_masked_chunks(
     dataset: h5py.Dataset | np.ndarray,
     show_progress: bool = True,
     desc_prefix=None,
-):
+) -> Generator[tuple[slice, np.ndarray], None, None]:
     offset = 0
     if mask is not None:
         assert mask.dtype.kind == "b"
@@ -1985,7 +2005,7 @@ def extract_random_snips(
     chunk: np.ndarray | torch.Tensor,
     n: int,
     sniplen: int,
-):
+) -> tuple[np.ndarray | torch.Tensor, np.ndarray]:
     """Grab n (or as many as can fit) random non-overlapping snips from chunk."""
     rg = np.random.default_rng(rg)
 
@@ -2249,8 +2269,6 @@ def vacuum_neg_candidate_prob(
             if 0 <= spike_cand[j] < n_units:
                 continue
             rsj = resp[s, j]
-            if rsj == 0:
-                continue
             resp[s, -1] += rsj
             resp[s, j] = 0.0
             loglik[s, j] = -np.inf

@@ -5,11 +5,9 @@ import numpy as np
 import torch
 
 from dartsort.util.multiprocessing_util import handle_negative_jobs
-from dartsort.util.torch_util import cleanup_and_log_gpu_usage
 
 from ..localize.localize_util import check_resume_or_overwrite, localize_hdf5
 from ..peel.peel_base import BasePeeler
-from .data_util import DARTsortSorting
 from .internal_config import ComputationConfig, FeaturizationConfig
 from .job_util import ensure_computation_config
 from .logging_util import get_logger

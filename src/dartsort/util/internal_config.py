@@ -1,10 +1,10 @@
+import math
 from collections.abc import Sequence
 from dataclasses import asdict, fields, replace
 from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Literal, Self
 
-import numpy as np
 import torch
 
 from .cli_util import argfield, dataclass_from_toml
@@ -43,11 +43,9 @@ class WaveformConfig:
         samples_after: int,
         sampling_frequency: float = 30_000.0,
     ) -> Self:
-        sampling_frequency = float(sampling_frequency)
-        samples_per_ms = sampling_frequency / 1000
         self = cls(
-            ms_before=samples_before / samples_per_ms,
-            ms_after=samples_after / samples_per_ms,
+            ms_before=cls.samples_to_ms(samples_before, sampling_frequency),
+            ms_after=cls.samples_to_ms(samples_after, sampling_frequency),
         )
         assert self.trough_offset_samples(sampling_frequency) == samples_before
         samples_total = samples_before + samples_after
@@ -57,23 +55,23 @@ class WaveformConfig:
         return self
 
     @staticmethod
-    def ms_to_samples(ms, sampling_frequency: float = 30_000.0):
-        if ms > sampling_frequency:
-            return int((ms / 1000.0) * sampling_frequency)
-        else:
-            return int(ms * (sampling_frequency / 1000.0))
+    def ms_to_samples(ms, sampling_frequency: float = 30_000.0) -> int:
+        n_samples = float(ms) * float(sampling_frequency) / 1000.0
+        return math.floor(n_samples + 0.5)
+
+    @staticmethod
+    def samples_to_ms(n_samples: int, sampling_frequency: float = 30_000.0) -> float:
+        return 1000.0 * n_samples / float(sampling_frequency)
 
     def length_ms(self):
         return self.ms_before + self.ms_after
 
-    def trough_offset_samples(self, sampling_frequency: float = 30_000.0):
-        sampling_frequency = np.round(sampling_frequency)
+    def trough_offset_samples(self, sampling_frequency: float = 30_000.0) -> int:
         return self.ms_to_samples(self.ms_before, sampling_frequency=sampling_frequency)
 
-    def spike_length_samples(self, sampling_frequency: float = 30_000.0):
-        spike_len_ms = self.ms_before + self.ms_after
-        sampling_frequency = np.round(sampling_frequency)
-        length = self.ms_to_samples(spike_len_ms, sampling_frequency=sampling_frequency)
+    def spike_length_samples(self, sampling_frequency: float = 30_000.0) -> int:
+        length_ms = self.length_ms()
+        length = self.ms_to_samples(length_ms, sampling_frequency=sampling_frequency)
         # odd is better for convolution arithmetic elsewhere
         length = 2 * (length // 2) + 1
         return length
@@ -174,7 +172,7 @@ class InterpolationParams:
     def extrap_diff(self):
         if self.actual_extrap_method != self.method:
             return True
-        if self.actual_extrap_kernel != self.kernel:  # noqa: SIM103
+        if self.actual_extrap_kernel != self.kernel:
             return True
         return False
 
@@ -363,7 +361,6 @@ class TemplateConfig:
         | str
     ) = "peelreduce"
     denoising_method: Literal["none", "exp_weighted", "svd"] = "svd"
-    weighted: bool = False
     grab_chunk_length_samples: int = 30_000
     units_per_job: int = 8
     whitening: WhiteningConfig = WhiteningConfig()
@@ -895,6 +892,11 @@ class ComputationConfig:
             return False
         return torch.cuda.device_count() > 1
 
+    def maybe_tmpdir_parent(self) -> Path | None:
+        if self.tmpdir_parent is None:
+            return None
+        return ensure_path(self.tmpdir_parent, strict=True)
+
 
 # default configs, used as defaults for kwargs in main.py etc
 default_waveform_cfg = WaveformConfig()
@@ -979,6 +981,13 @@ class DARTsortInternalConfig:
     save_final_features: bool = True
     always_save_detailed_features: bool = False
     save_everything_on_error: bool = False
+
+    def maybe_tmpdir_parent(self) -> Path | None:
+        if self.tmpdir_parent is not None:
+            return ensure_path(self.tmpdir_parent, strict=True)
+        if self.computation_cfg.tmpdir_parent is not None:
+            return ensure_path(self.tmpdir_parent, strict=True)
+        return None
 
 
 def to_internal_config(cfg, n_channels: int) -> DARTsortInternalConfig:

@@ -5,14 +5,14 @@ import numpy as np
 import seaborn as sns
 from matplotlib.colors import FuncNorm
 
+from ..util.py_util import panic
 from .layout import BasePlot, flow_layout
 
-table_cmap = ["managua", "cividis"]
-for table_cmap in table_cmap:
+for table_cmap in ["managua", "cividis"]:
     if table_cmap in plt.colormaps:
         break
 else:
-    assert False
+    panic()
 
 
 class ComparisonPlot(BasePlot):
@@ -38,7 +38,7 @@ class TextInfo(ComparisonPlot):
             big_bad_msg = f"{bb[0]}"
             nb = 1
             for ii in bb[1:]:
-                big_bad_msg += f",{str(ii)}"
+                big_bad_msg += f",{ii!s}"
                 nb += 1
                 if nb > 8:
                     big_bad_msg += "\n"
@@ -205,13 +205,13 @@ class MetricRegPlot(ComparisonPlot):
         can_logx = (
             len(df_show)
             and np.isfinite(df_show[self.x].values).all()
-            and (df_show[self.x].values >= 0).all()
+            and (df_show[self.x].values > 0).all()
         )
         log_x = self.log_x and can_logx
         can_logy = (
             len(df_show)
             and np.isfinite(df_show[self.y].values).all()
-            and (df_show[self.y].values >= 0).all()
+            and (df_show[self.y].values > 0).all()
         )
         log_y = self.log_y and can_logy
         if log_x and log_y:
@@ -257,7 +257,7 @@ class MetricDistribution(ComparisonPlot):
         df = df[xs].melt(value_vars=xs, var_name="metric")
         if self.flavor == "hist":
             sns.histplot(
-                data=df,
+                data=df[np.isfinite(df.value)],
                 x="value",
                 hue="metric",
                 palette=list(colors),
@@ -268,7 +268,7 @@ class MetricDistribution(ComparisonPlot):
             sns.move_legend(ax, "upper left", frameon=False)
         elif self.flavor == "box":
             sns.boxplot(
-                data=df,
+                data=df[np.isfinite(df.value)],
                 x="metric",
                 y="value",
                 hue="metric",
@@ -321,7 +321,9 @@ class TemplateDistancesHistogram(ComparisonPlot):
 
     def draw(self, panel, comparison):
         ax = panel.subplots()
-        d = np.nan_to_num(comparison.template_distances, nan=np.inf)
+        d = np.nan_to_num(
+            comparison.template_distances, nan=np.inf, posinf=np.inf, neginf=-np.inf
+        )
         d = np.maximum(d, 0.0, dtype=np.float64)
         vm = min(d.min(0).max(), d.min(1).max())
         min_gt_dist_for_tested_units = d.min(axis=self.axis)
@@ -332,7 +334,7 @@ class TemplateDistancesHistogram(ComparisonPlot):
         vmax = vm if np.isfinite(vm).any() else 1.0
         bins = np.logspace(np.log10(vmin), np.log10(vmax), 96)
         ax.hist(x, bins=bins, color="orange", log=True)
-        if x.shape[0] > 1 and (x >= 0).all():
+        if x.shape[0] > 1 and (x > 0).all():
             ax.semilogx()
         ax.grid(which="both")
         ax.set_ylabel("count")
@@ -349,78 +351,86 @@ class TemplateDistancesHistogram(ComparisonPlot):
                 fontsize="small",
             )
         else:
-            assert False
+            panic(self.axis)
 
 
 box = MetricDistribution(flavor="box", width=2, height=3.5)
 box.kind = "gtmetric"
-full_gt_overview_plots = (
-    MetricRegPlot(x="gt_ptp_amplitude", y="accuracy"),
-    MetricRegPlot(x="gt_ptp_amplitude", y="recall", color="r"),
-    MetricRegPlot(x="gt_ptp_amplitude", y="precision", color="g"),
-    MetricRegPlot(x="gt_ptp_amplitude", y="gt_dt_rms", color="palevioletred"),
-    MetricRegPlot(x="gt_firing_rate", y="accuracy"),
-    MetricRegPlot(x="gt_firing_rate", y="recall", color="r"),
-    MetricRegPlot(x="gt_firing_rate", y="precision", color="g"),
-    MetricRegPlot(x="min_temp_dist", y="precision", color="g"),
-    MetricRegPlot(x="min_temp_dist", y="recall", color="gt_ptp_amplitude", log_x=True),
-    MetricRegPlot(
-        x="min_temp_dist",
-        y="gt_dt_rms",
-        color="gt_ptp_amplitude",
-        log_x=True,
-        logistic=False,
-        lowess=True,
-    ),
-    MetricRegPlot(
-        x="min_temp_dist", y="unsorted_recall", color="gt_ptp_amplitude", log_x=True
-    ),
-    MetricRegPlot(
-        x="gt_ptp_amplitude",
-        y="min_temp_dist",
-        color="orange",
-        logistic=False,
-        lowess=True,
-        log_y=True,
-    ),
-    MetricRegPlot(
-        x="gt_firing_rate",
-        y="min_temp_dist",
-        color="orange",
-        logistic=False,
-        lowess=True,
-        log_y=True,
-    ),
-    MetricRegPlot(
-        x="gt_dt_rms",
-        y="gt_ptp_amplitude",
-        color="orange",
-        logistic=False,
-        lowess=True,
-        log_y=True,
-    ),
-    MetricRegPlot(x="gt_ptp_amplitude", y="unsorted_recall", color="purple"),
-    box,
-    MetricDistribution(),
-    TrimmedAgreementMatrix(),
-    TrimmedTemplateDistanceMatrix(),
-    TemplateDistancesHistogram(0),
-    TemplateDistancesHistogram(1),
-)
 
-default_gt_overview_plots = (
-    MetricRegPlot(x="gt_ptp_amplitude", y="accuracy"),
-    MetricRegPlot(x="gt_ptp_amplitude", y="recall", color="r"),
-    MetricRegPlot(x="gt_ptp_amplitude", y="precision", color="g"),
-    MetricRegPlot(x="gt_firing_rate", y="accuracy"),
-    MetricRegPlot(x="gt_firing_rate", y="recall", color="r"),
-    MetricRegPlot(x="gt_firing_rate", y="precision", color="g"),
-    MetricRegPlot(x="gt_ptp_amplitude", y="unsorted_recall", color="purple"),
-    box,
-    MetricDistribution(),
-    TrimmedAgreementMatrix(),
-    TrimmedAgreementMatrix(ordered=False),
-)
+
+def full_gt_overview_plots():
+    return (
+        MetricRegPlot(x="gt_ptp_amplitude", y="accuracy"),
+        MetricRegPlot(x="gt_ptp_amplitude", y="recall", color="r"),
+        MetricRegPlot(x="gt_ptp_amplitude", y="precision", color="g"),
+        MetricRegPlot(x="gt_ptp_amplitude", y="gt_dt_rms", color="palevioletred"),
+        MetricRegPlot(x="gt_firing_rate", y="accuracy"),
+        MetricRegPlot(x="gt_firing_rate", y="recall", color="r"),
+        MetricRegPlot(x="gt_firing_rate", y="precision", color="g"),
+        MetricRegPlot(x="min_temp_dist", y="precision", color="g"),
+        MetricRegPlot(
+            x="min_temp_dist", y="recall", color="gt_ptp_amplitude", log_x=True
+        ),
+        MetricRegPlot(
+            x="min_temp_dist",
+            y="gt_dt_rms",
+            color="gt_ptp_amplitude",
+            log_x=True,
+            logistic=False,
+            lowess=True,
+        ),
+        MetricRegPlot(
+            x="min_temp_dist", y="unsorted_recall", color="gt_ptp_amplitude", log_x=True
+        ),
+        MetricRegPlot(
+            x="gt_ptp_amplitude",
+            y="min_temp_dist",
+            color="orange",
+            logistic=False,
+            lowess=True,
+            log_y=True,
+        ),
+        MetricRegPlot(
+            x="gt_firing_rate",
+            y="min_temp_dist",
+            color="orange",
+            logistic=False,
+            lowess=True,
+            log_y=True,
+        ),
+        MetricRegPlot(
+            x="gt_dt_rms",
+            y="gt_ptp_amplitude",
+            color="orange",
+            logistic=False,
+            lowess=True,
+            log_y=True,
+        ),
+        MetricRegPlot(x="gt_ptp_amplitude", y="unsorted_recall", color="purple"),
+        box,
+        MetricDistribution(),
+        TrimmedAgreementMatrix(),
+        TrimmedTemplateDistanceMatrix(),
+        TemplateDistancesHistogram(0),
+        TemplateDistancesHistogram(1),
+    )
+
+
+def default_gt_overview_plots():
+    return (
+        MetricRegPlot(x="gt_ptp_amplitude", y="accuracy"),
+        MetricRegPlot(x="gt_ptp_amplitude", y="recall", color="r"),
+        MetricRegPlot(x="gt_ptp_amplitude", y="precision", color="g"),
+        MetricRegPlot(x="gt_firing_rate", y="accuracy"),
+        MetricRegPlot(x="gt_firing_rate", y="recall", color="r"),
+        MetricRegPlot(x="gt_firing_rate", y="precision", color="g"),
+        MetricRegPlot(x="gt_ptp_amplitude", y="unsorted_recall", color="purple"),
+        box,
+        MetricDistribution(),
+        TrimmedAgreementMatrix(),
+        TrimmedAgreementMatrix(ordered=False),
+    )
+
 
 # multi comparisons stuff
 # box and whisker between sorters
@@ -435,6 +445,8 @@ def make_gt_overview_summary(
     suptitle=True,
     same_width_flow=True,
 ):
+    if not isinstance(plots, (list, tuple)):
+        plots = plots()
     if not comparison.has_templates:
         plots_ = []
         for plot in plots:
