@@ -1,0 +1,22 @@
+dataset:
+  loader: aind_hybrid
+  recording_path: /home/churwitz/data/spike-sort-bench/aind_np1_probeA_case0/recording_60s
+  sorting_path: /home/churwitz/data/spike-sort-bench/aind_np1_probeA_case0/sorting_60s
+
+sorter:
+  name: dartsort
+  timeout_s: 1800
+  params:
+    preprocessing: ibllikecmr
+    device: cuda
+    n_jobs_cpu: 0
+    matching_iterations: 1
+    temporal_upsamples: 2
+
+comparison:
+  delta_time: 0.4
+  match_score: 0.5
+
+output:
+  output_dir: /home/churwitz/data/spike-sort-bench/aind_np1_probeA_case0/output_optimize
+  results_file: results.json
