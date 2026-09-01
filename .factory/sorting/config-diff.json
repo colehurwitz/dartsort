@@ -1,0 +1,1 @@
+{"file": "benchmark_60s.yaml", "parameter": "temporal_upsamples", "old_value": 4, "new_value": 2, "rationale": "Reduce template matching upsampling to halve upsampled template computation"}
