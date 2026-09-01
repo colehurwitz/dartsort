@@ -158,13 +158,16 @@ class SimpleMatrixFeatures:
                 n_pitches_shift=n_pitches_shift,
                 workers=workers,
             )
-            assert sorting.parent_h5_path is not None
-            with h5py.File(sorting.parent_h5_path, "r", locking=False) as h5:
+            # Fast path: use preloaded PCA data if available on sorting
+            pca_data = getattr(
+                sorting, clustering_features_cfg.pca_dataset_name, None
+            )
+            if pca_data is not None:
                 _erp, pcs = interpolate_by_chunk(
                     mask=None,
-                    dataset=h5[clustering_features_cfg.pca_dataset_name],
+                    dataset=pca_data,
                     geom=motion.geom,
-                    channel_index=cast(h5py.Dataset, h5["channel_index"])[:],
+                    channel_index=sorting.channel_index,
                     channels=sorting.channels,
                     shifts=shifts,
                     registered_geom=motion.rgeom,
@@ -173,8 +176,30 @@ class SimpleMatrixFeatures:
                     trim_to_rank=clustering_features_cfg.n_main_channel_pcs,
                     show_progress=False,
                 )
-                assert pcs.shape[2] == 1  # just one channel here
-                pcs = pcs[:, : clustering_features_cfg.n_main_channel_pcs, 0]
+            else:
+                assert sorting.parent_h5_path is not None
+                with h5py.File(
+                    sorting.parent_h5_path, "r", locking=False
+                ) as h5:
+                    _erp, pcs = interpolate_by_chunk(
+                        mask=None,
+                        dataset=h5[
+                            clustering_features_cfg.pca_dataset_name
+                        ],
+                        geom=motion.geom,
+                        channel_index=cast(
+                            h5py.Dataset, h5["channel_index"]
+                        )[:],
+                        channels=sorting.channels,
+                        shifts=shifts,
+                        registered_geom=motion.rgeom,
+                        target_channels=schan,
+                        params=clustering_features_cfg.interp_params,
+                        trim_to_rank=clustering_features_cfg.n_main_channel_pcs,
+                        show_progress=False,
+                    )
+            assert pcs.shape[2] == 1  # just one channel here
+            pcs = pcs[:, : clustering_features_cfg.n_main_channel_pcs, 0]
             check_numbers("h5 interp pcs", pcs, raise_for_numerics=raise_on_na)
         else:
             pcs = None
