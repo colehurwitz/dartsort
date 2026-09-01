@@ -1,43 +1,36 @@
-# Builder Review — temporal_upsamples 4→2
+# Builder Review — H1: Preload PCA Dataset
 
-**Date:** 2026-09-01
-**Parameter:** `temporal_upsamples`
-**File:** `benchmark_60s.yaml`
-**Change:** `4 → 2` (default was 4; explicitly set to 2)
+## Summary
+Implemented preloading of the PCA dataset (`collisioncleaned_tpca_features`) in `cluster()` to eliminate duplicate HDF5 reads. Both `SimpleMatrixFeatures.from_config()` and `StableWaveformFeatures.from_config()` previously read the same ~115MB 3D dataset from HDF5 independently. Now the data is loaded once into memory and shared.
 
-## What Was Done
+## Changes
 
-Added `temporal_upsamples: 2` under `sorter.params` in `benchmark_60s.yaml`. This is the only file modified.
+### `src/dartsort/main.py` (+19 lines)
+- In `cluster()`, before calling `SimpleMatrixFeatures.from_config()`, preload the PCA dataset from HDF5 into the sorting object via `add_ephemeral_feature()`
+- Guard: only when `features is None`, `parent_h5_path` exists, and data not already loaded
+- Uses dict checks (`_ephemeral_features`, `_persistent_features`) instead of `hasattr()` to avoid triggering `__getattr__` lazy loading
+- Wrapped in try/except for graceful fallback
 
-## Why
+### `src/dartsort/clustering/clustering_features.py` (+22 lines, -6 lines)
+- In `SimpleMatrixFeatures.from_config()`, added fast path in the motion-aware PCA branch
+- Checks for preloaded data via `getattr(sorting, pca_dataset_name, None)`
+- If data is in memory: uses it directly with `sorting.channel_index`
+- If not: falls through to existing H5 path (preserved unchanged)
+- Moved `assert pcs.shape[2] == 1` and slicing outside both branches so they execute regardless of path
 
-Per the strategy analysis, `temporal_upsamples` is the highest-ranked parameter for speed optimization (Rank 1). It targets the matching stage (228.9s, 28.4% of dartsort core time) with low-to-medium accuracy risk:
+## Correctness Verification
+- `sorting.channel_index` == `h5['channel_index'][:]`: both loaded from the same H5 file; verified via `_no_check_needed()` → `_is_geom_related()` which always loads `channel_index` as a persistent feature
+- `interpolate_by_chunk()` already accepts both `np.ndarray` and `h5py.Dataset` (line 25 of interpolation_util.py)
+- `StableWaveformFeatures.from_config()` already has the matching fast path (line 262-276) — it will find the preloaded data via `hasattr()` → `__getattr__` → `_ephemeral_features`
+- Data is identical bytes: `h5[pca_name][:]` produces the same numpy array regardless of when it's read
 
-- **Mechanism:** Halves the number of upsampled template versions from 4 to 2, reducing SVD projections, pairwise overlap computation, and fine-pass matching candidates.
-- **Expected speed savings:** 26–43s (3.2–5.3% of dartsort core time).
-- **Expected accuracy impact:** −0.001 to −0.005 (projected 0.824–0.828, well above 0.8207 threshold).
-- **Temporal precision:** Moves from 1/4 sample (±8.3μs) to 1/2 sample (±16.7μs) at 30kHz — still high resolution.
+## Test Results
+- **72/72 passed** in `test_clustering.py` (90.80s)
+- **34/34 passed** in `test_data_util.py` + `test_cluster_util.py` (12.59s)
+- All imports verified clean
 
-## Verification
-
-- Only `benchmark_60s.yaml` was modified (config file, `.yaml` extension).
-- No `.py`, `.cu`, `.cpp`, `.c`, `.h`, `.pyx`, or `.sh` files were touched.
-- The resulting YAML is valid and matches the target structure from the strategy document.
-
-## Resulting Config (sorter section)
-
-```yaml
-sorter:
-  name: dartsort
-  timeout_s: 1800
-  params:
-    preprocessing: ibllikecmr
-    device: cuda
-    n_jobs_cpu: 0
-    matching_iterations: 1
-    temporal_upsamples: 2
-```
-
-## Next Steps
-
-Run the benchmark: `python benchmark_adapter.py benchmark_60s.yaml results/temporal_upsamples_2.json`
+## Expected Impact
+- Eliminates 1 full H5 read of ~115MB 3D PCA dataset
+- Reduces chunk decompression overhead (numpy array iteration faster than h5py)
+- Estimated 15-25s savings in clustering stage
+- Memory overhead: ~115MB (acceptable for GPU machine)

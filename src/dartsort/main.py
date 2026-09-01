@@ -802,6 +802,25 @@ def cluster(
     computation_cfg = ensure_computation_config(computation_cfg)
     if features is None:
         assert clustering_features_cfg is not None
+        # Preload PCA dataset to avoid duplicate HDF5 reads in feature
+        # computation. Both SimpleMatrixFeatures and StableWaveformFeatures
+        # read the same PCA dataset; preloading lets them share the data.
+        pca_name = clustering_features_cfg.pca_dataset_name
+        if (
+            sorting.parent_h5_path is not None
+            and pca_name not in sorting._ephemeral_features
+            and pca_name not in sorting._persistent_features
+        ):
+            import h5py as _h5
+
+            try:
+                with _h5.File(sorting.parent_h5_path, "r", locking=False) as _h5f:
+                    if pca_name in _h5f:
+                        sorting.add_ephemeral_feature(
+                            pca_name, _h5f[pca_name][:]
+                        )
+            except Exception:
+                pass  # Fall back to per-call H5 reads
         features = SimpleMatrixFeatures.from_config(
             sorting=sorting,
             motion=motion,
