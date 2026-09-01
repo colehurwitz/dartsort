@@ -1,49 +1,23 @@
-## Builder Review — 2026-09-01
+# Builder Review — benchmark_adapter.py timing fix
 
-### Experiment
-**H1: Eliminate HDF5 round-trip in threshold_to_fit()**
+## What was done
 
-### What was implemented
-Modified `threshold_to_fit()` in `src/dartsort/peel/peel_lib.py` to accumulate threshold-detected waveforms in memory instead of writing them to a temp HDF5 file and reading them back.
+Fixed `benchmark_adapter.py` to read the actual sorting time from `dartsort_output/timing.json` instead of using `metrics.speed_s` from `results.json`, which only contains the comparison time (0.23s vs 706.65s actual).
 
-**New function:** `_threshold_to_fit_in_memory()` — a helper that:
-1. Gets chunk starts and shuffles them (same logic as `peel()` with `shuffle=True`)
-2. Iterates chunks using `trainer.process_chunk()`, accumulating waveforms/channels/voltages in lists
-3. Applies early stopping when `n_spikes >= max_waveforms_fit` (same condition as `peel()`)
-4. Concatenates accumulated tensors
-5. Computes amplitude-based reweighting via `fit_reweighting()` from `data_util.py` (same logic as `subsample_waveforms()` with `subsample_by_weighting=True`)
-6. Passes waveforms + weights directly to `pipeline.fit()`
+## Changes
 
-**Branching logic:** The in-memory path is used when `pipeline.needs_residual() == False` (the common case for initial denoiser fitting). When residual snips are needed (e.g., whitener fitting), the existing HDF5 path is preserved unchanged.
+- **benchmark_adapter.py**: Modified `translate()` to accept an optional `results_dir` parameter. When provided, it reads `{results_dir}/dartsort_output/timing.json` and:
+  - Uses `timing_data["total"]` (706.65s) as `speed_seconds` instead of `metrics["speed_s"]` (0.23s)
+  - Populates `stage_timing` from all non-"total" entries, each prefixed with `dartsort_` (e.g., `dartsort_initial_detection`, `dartsort_cluster0`)
+  - Falls back to old behavior (`metrics.speed_s`, empty stage_timing) when timing.json is absent
+- **main()**: Passes `results_dir` to `translate()`
 
-### Files modified
-- `src/dartsort/peel/peel_lib.py` (+121 lines, -1 line)
+## Testing
 
-### Correctness verification
-- **Same waveforms:** Produced by the same `peel_chunk()` calls with same detection parameters
-- **Same weighting:** `fit_reweighting()` called with identical parameters (voltages, fit_sampling, fit_max_reweighting)
-- **Same fit inputs:** `TemporalPCADenoiser.fit()` receives identical waveforms/channels/weights (confirmed it does NOT use hdf5_filename parameter)
-- **Fallback preserved:** HDF5 path unchanged for residual-snip-requiring cases
+Verified with real data files:
+- Fallback mode (no results_dir): `speed_seconds = 0.23`, empty `stage_timing` ✓
+- With timing.json: `speed_seconds = 706.65`, 9 stage timing entries with `dartsort_` prefix ✓
 
-### Test results
-- `test_subtract.py`: 3/3 passed (includes `test_fakedata_nonn` which exercises full subtraction pipeline)
-- `test_threshold.py`: 1/1 passed
-- `test_dartsort.py`: 5/5 passed (includes end-to-end `test_fakedata` and `test_fakedata_nonn`)
-- `test_transform.py`: 1/1 passed
-- Full suite: 497/498 passed (1 pre-existing failure in `test_drifty_matching.py::test_interp_upsampling[interpolation-16-8-1]` — numerical precision issue unrelated to this change)
+## Scope
 
-### Expected speedup
-| Component | Estimated savings |
-|-----------|-------------------|
-| HDF5 write (9.4GB incremental) | 3–8s |
-| HDF5 read via batched_h5_read (9.4GB) | 5–12s |
-| HDF5 metadata/chunking overhead | 1–3s |
-| TemporaryDirectory creation + cleanup | 0.5s |
-| **Total** | **10–24s** |
-
-Conservative: 15s (1.6% of 959.55s baseline)
-
-### Risk assessment
-**Zero accuracy risk.** Only data transport changes (disk → memory). No numerical computation is modified. All downstream stages (subtraction loop, featurization, clustering, matching) receive identical inputs.
-
-**Memory:** 512K waveforms ≈ 10GB in float32 — same data was transiently in memory during HDF5 writes anyway. Typical spike sorting machines have ≥64GB RAM.
+Only `benchmark_adapter.py` was modified — single file, focused change.
