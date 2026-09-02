@@ -1,0 +1,6 @@
+{
+  "sorting_benchmark": {
+    "command": "python3 benchmark_adapter.py /home/churwitz/spike-benchmark/configs/aind_gpu_test.yaml {output}",
+    "recording": "/home/churwitz/data/spike-sort-bench/aind_np1_644864_probeA_case0/recording_60s"
+  }
+}
