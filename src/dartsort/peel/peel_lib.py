@@ -811,7 +811,7 @@ def threshold_to_fit(
     Used by subtraction to fit initial NN denoisers.
     """
     from ..transform import Waveform, WaveformPipeline
-    from ..util.data_util import subsample_waveforms
+    from ..util.data_util import fit_reweighting, subsample_waveforms
     from .threshold import Threshold
 
     computation_cfg = ensure_computation_config(computation_cfg)
@@ -847,6 +847,21 @@ def threshold_to_fit(
     else:
         n_resid_snips = None
 
+    # When no residual snips are needed (common case for initial denoiser
+    # fitting), accumulate waveforms in memory to avoid the HDF5 round-trip
+    # of writing ~9GB and reading it all back.
+    if n_resid_snips is None:
+        return _threshold_to_fit_in_memory(
+            pipeline=pipeline,
+            trainer=trainer,
+            recording=recording,
+            sampling_cfg=sampling_cfg,
+            max_waveforms_fit=max_waveforms_fit,
+            threshold_cfg=threshold_cfg,
+            computation_cfg=computation_cfg,
+        )
+
+    # Fall back to HDF5 path when residual snips are needed (e.g., whitener)
     if tmp_dir is None:
         tmp_dir = computation_cfg.maybe_tmpdir_parent()
     with TemporaryDirectory(dir=tmp_dir) as temp_dir:
@@ -892,5 +907,110 @@ def threshold_to_fit(
         finally:
             if temp_hdf5_filename.exists():
                 temp_hdf5_filename.unlink()
+
+    return pipeline
+
+
+def _threshold_to_fit_in_memory(
+    pipeline,
+    trainer,
+    recording,
+    sampling_cfg,
+    max_waveforms_fit,
+    threshold_cfg,
+    computation_cfg,
+):
+    """Accumulate threshold-detected waveforms in memory and fit pipeline.
+
+    This avoids the HDF5 round-trip where run_subsampled_peeling() writes
+    all waveforms to a temp HDF5 file and subsample_waveforms() reads them
+    back. Instead, waveforms are accumulated in CPU memory during peeling
+    and passed directly to pipeline.fit().
+    """
+    from ..util.data_util import fit_reweighting
+
+    device = computation_cfg.actual_device()
+
+    # Get chunk starts — same logic as peel() with shuffle=True
+    chunk_starts = trainer.get_chunk_starts()
+    chunk_starts = np.asarray(chunk_starts, dtype=np.int64)
+    # Shuffle chunks — same as peel(shuffle=True)
+    chunk_starts = trainer.sample_chunks(
+        chunk_starts_samples=chunk_starts,
+        n_chunks=len(chunk_starts),
+    )
+
+    # Accumulate waveforms in memory
+    waveform_chunks = []
+    channel_chunks = []
+    voltage_chunks = []
+    n_spikes = 0
+
+    trainer.to(device)
+    trainer.eval()
+    try:
+        with torch.no_grad():
+            for chunk_start in chunk_starts:
+                result = trainer.process_chunk(
+                    int(chunk_start),
+                    return_residual=False,
+                    skip_features=False,
+                    to_cpu=True,
+                )
+                n_new = result["n_spikes"]
+                if n_new:
+                    waveform_chunks.append(result["waveforms"])
+                    channel_chunks.append(result["channels"])
+                    voltage_chunks.append(result["voltages"])
+                    n_spikes += n_new
+
+                # Early stopping — same condition as peel()
+                if n_spikes >= max_waveforms_fit:
+                    break
+    finally:
+        trainer.to("cpu")
+
+    if not n_spikes:
+        raise ValueError(
+            "Found no spikes when thresholding to get model fitting data. "
+            "This usually indicates a preprocessing issue, since it means "
+            "that no spikes could be found at threshold "
+            f"{threshold_cfg.detection_threshold}."
+        )
+
+    # Concatenate accumulated chunks
+    waveforms = torch.cat(waveform_chunks)
+    channels = torch.cat(channel_chunks)
+    voltages = torch.cat(voltage_chunks)
+    del waveform_chunks, channel_chunks, voltage_chunks
+
+    # Compute amplitude-based reweighting — same logic as
+    # subsample_waveforms() with subsample_by_weighting=True
+    weights = fit_reweighting(
+        voltages=voltages.numpy(force=True),
+        fit_sampling=sampling_cfg.fit_sampling,
+        fit_max_reweighting=sampling_cfg.fit_max_reweighting,
+        voltages_dataset_name="voltages",
+    )
+    del voltages
+
+    fixed_properties: dict[str, torch.Tensor] = {
+        "channels": channels.to(device),
+    }
+    if weights is not None:
+        fixed_properties["weights"] = torch.as_tensor(weights, device=device)
+    else:
+        fixed_properties["weights"] = torch.ones(n_spikes, device=device)
+
+    # Fit the pipeline — same call as the HDF5 path, minus hdf5_filename
+    # (TemporalPCADenoiser.fit() does not use hdf5_filename)
+    pipeline = pipeline.to(device)
+    pipeline.fit(
+        recording=recording,
+        waveforms=waveforms,
+        computation_cfg=computation_cfg,
+        **fixed_properties,
+    )
+    pipeline.to("cpu")
 
     return pipeline
