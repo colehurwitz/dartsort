@@ -441,6 +441,11 @@ class DensityPeaksClusterer(Clusterer):
 
         if subsampling:
             kdtree = res["kdtree"]
+            if kdtree is None:
+                # GPU NHDN path skipped the KDTree build; build lazily
+                # for nearest_neighbor_assign on subsampled points.
+                from scipy.spatial import KDTree
+                kdtree = KDTree(X_fit)
             assert isinstance(ixs, np.ndarray)
             rest = np.setdiff1d(np.arange(len(X)), ixs)
             Xr = X[rest]

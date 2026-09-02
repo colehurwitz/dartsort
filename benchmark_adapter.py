@@ -8,9 +8,12 @@ Results are always also printed to stdout.
 """
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import yaml
 
 
 def translate(raw: dict, results_dir: Path | None = None) -> dict:
@@ -67,8 +70,19 @@ def main() -> None:
     config_path = sys.argv[1]
     output_path = sys.argv[2] if len(sys.argv) > 2 else None
 
+    # Clear stale dartsort output so overwrite=False doesn't skip computation
+    with open(config_path) as f:
+        cfg = yaml.safe_load(f)
+    results_dir = Path(cfg["output"]["output_dir"])
+    dartsort_output = results_dir / "dartsort_output"
+    if dartsort_output.exists():
+        shutil.rmtree(dartsort_output)
+    stale_results = results_dir / "results.json"
+    if stale_results.exists():
+        stale_results.unlink()
+
     result = subprocess.run(
-        ["/usr/bin/python3", "-m", "spike_sort_bench", "--config", config_path],
+        [sys.executable, "-m", "spike_sort_bench", "--config", config_path],
         capture_output=True,
         text=True,
     )
@@ -78,12 +92,6 @@ def main() -> None:
         print(result.stderr, file=sys.stderr)
         sys.exit(result.returncode)
 
-    import yaml
-
-    with open(config_path) as f:
-        cfg = yaml.safe_load(f)
-
-    results_dir = Path(cfg["output"]["output_dir"])
     results_file = cfg["output"].get("results_file", "results.json")
     results_path = results_dir / results_file
 
