@@ -379,6 +379,165 @@ def sort_density(
     return dens.numpy(force=True)
 
 
+def sort_nhdn(
+    X: np.ndarray | torch.Tensor,
+    density: np.ndarray | torch.Tensor,
+    max_distance: float,
+    n_neighbors_search: int = 20,
+    device: torch.device | str = "cpu",
+    batch_size: int = 2048,
+    col_batch_size: int = 1024,
+    show_progress: bool = False,
+) -> np.ndarray:
+    """GPU-accelerated nearest higher density neighbor via sorted first-dim window.
+
+    Mirrors the sliding window pattern of sort_density() to find, for each
+    point, its nearest neighbor (within max_distance) that has strictly higher
+    density.  This is a drop-in replacement for nearest_higher_density_neighbor()
+    that avoids building a KDTree and runs entirely on the given device.
+
+    Like nearest_higher_density_neighbor(), considers at most
+    n_neighbors_search nearest neighbors per point, then finds the nearest
+    among those with strictly higher density.
+
+    Parameters
+    ----------
+    X : (n, d) array
+        Feature vectors.
+    density : (n,) array
+        Pre-computed density per point.
+    max_distance : float
+        Maximum Euclidean distance for neighbor search.
+    n_neighbors_search : int
+        Maximum number of nearest neighbors to consider per point.
+    device : torch.device or str
+    batch_size : int
+    col_batch_size : int
+    show_progress : bool
+
+    Returns
+    -------
+    nhdn : (n,) np.ndarray of int
+        nhdn[i] is the index (in original ordering) of i's nearest
+        higher-density neighbor, or n if no such neighbor exists.
+    """
+    device = torch.device(device)
+    X = torch.asarray(X, device=device)
+    density = torch.asarray(density, device=device)
+    n = len(X)
+    k = n_neighbors_search
+
+    # Sort by first dimension for sliding window
+    order = torch.argsort(X[:, 0])
+    X = X[order]
+    density = density[order]
+    X0 = X[:, 0].contiguous()
+    Xnormsq = torch.linalg.vector_norm(X, dim=1).square_()
+
+    max_dist_sq = X.new_tensor(max_distance * max_distance)
+
+    # Result buffer (sorted space)
+    nhdn_sorted = torch.full((n,), n, dtype=torch.long, device=device)
+
+    # Pre-allocate distance buffer
+    dist_buf = X.new_zeros((batch_size * col_batch_size,))
+
+    if show_progress:
+        iter_ = progrange(0, n, batch_size, desc=f"SortNHDN:{device.type}")
+    else:
+        iter_ = range(0, n, batch_size)
+
+    i0 = i1 = 0
+    for q0 in iter_:
+        q1 = min(n, q0 + batch_size)
+        nq = q1 - q0
+
+        Q = X[q0:q1]
+        Q_dens = density[q0:q1]
+
+        x0 = Q[0, 0] - max_distance
+        x1 = Q[-1, 0] + max_distance
+
+        # Advance window bounds (same logic as sort_density)
+        if i0 == q0:
+            assert q0 == 0
+        else:
+            assert q0 > i0
+            i0 = i0 + torch.searchsorted(X0[i0:q0], x0, side="right") - 1
+            i0.clamp_(min=0)
+            i0 = int(i0.item())
+
+        if q1 == n:
+            i1 = n
+        else:
+            i1 = q1 + torch.searchsorted(X0[q1:], x1, side="right")
+            i1.clamp_(max=n)
+            i1 = int(i1.item())
+
+        # Track k nearest neighbors per query (regardless of density)
+        topk_dist = X.new_full((nq, k), float("inf"))
+        topk_idx = torch.full((nq, k), n, dtype=torch.long, device=device)
+
+        for j0 in range(i0, i1, col_batch_size):
+            j1 = min(j0 + col_batch_size, i1)
+            nj = j1 - j0
+            nbuf = nq * nj
+
+            dist = sqeuc_cdist_known_norm(
+                X=Q,
+                Xnormsq=Xnormsq[q0:q1],
+                Y=X[j0:j1],
+                Ynormsq=Xnormsq[j0:j1],
+                out=dist_buf[:nbuf].view(nq, nj),
+            )
+
+            # Mask out-of-range distances
+            dist.masked_fill_(dist > max_dist_sq, float("inf"))
+
+            # Mask self-distances where query and column ranges overlap
+            if q0 < j1 and j0 < q1:
+                ov_lo = max(q0, j0)
+                ov_hi = min(q1, j1)
+                row_ix = torch.arange(ov_lo - q0, ov_hi - q0, device=device)
+                col_ix = torch.arange(ov_lo - j0, ov_hi - j0, device=device)
+                dist[row_ix, col_ix] = float("inf")
+
+            # Merge column batch candidates with accumulated top-k
+            n_cand = min(k, nj)
+            batch_vals, batch_sel = dist.topk(n_cand, dim=1, largest=False)
+            batch_idx = batch_sel + j0
+
+            merged_dist = torch.cat([topk_dist, batch_vals], dim=1)
+            merged_idx = torch.cat([topk_idx, batch_idx], dim=1)
+            new_vals, sel = merged_dist.topk(k, dim=1, largest=False)
+            topk_dist = new_vals
+            topk_idx = merged_idx.gather(1, sel)
+
+        # Apply density filtering to k nearest neighbors
+        valid_neigh = topk_idx < n
+        clamped_idx = topk_idx.clamp(max=n - 1)
+        neigh_dens = density[clamped_idx]
+
+        not_higher = neigh_dens <= Q_dens[:, None]
+        neginf_mask = neigh_dens.isneginf()
+        topk_dist.masked_fill_(~valid_neigh | not_higher | neginf_mask, float("inf"))
+
+        # Find nearest higher-density among k nearest
+        best_d, best_j = topk_dist.min(dim=1)
+        best_sorted_idx = topk_idx.gather(1, best_j.unsqueeze(1)).squeeze(1)
+        best_sorted_idx[best_d.isinf()] = n
+
+        nhdn_sorted[q0:q1] = best_sorted_idx
+
+    # Map sorted indices back to original ordering
+    result = torch.full((n,), n, dtype=torch.long, device=device)
+    valid = nhdn_sorted < n
+    result[order[valid]] = order[nhdn_sorted[valid]]
+    result[order[~valid]] = n
+
+    return result.cpu().numpy()
+
+
 def kdt_density(
     kdtree: KDTree,
     X: np.ndarray,
@@ -535,8 +694,17 @@ def density_peaks(
         workers=workers,
         leafsize=leafsize,
     )
+    use_gpu_nhdn = torch.device(device).type != "cpu"
     if not np.array_equal(inlier_dim_ixs, dim_arange):
-        kdtree = KDTree(X)
+        # On GPU path with sort density strategy, the full-dim KDTree is only
+        # needed for border removal — skip the expensive 8D rebuild otherwise.
+        need_kdt = not use_gpu_nhdn or (
+            density is None and density_strategy in ("kdt", "knn")
+        ) or remove_borders
+        if need_kdt:
+            kdtree = KDTree(X)
+        else:
+            kdtree = None
 
     if density is None:
         if density_strategy == "kdt":
@@ -574,13 +742,23 @@ def density_peaks(
         else:
             raise ValueError(f"Unknown density strategy: {density_strategy}")
 
-    nhdn = nearest_higher_density_neighbor(
-        kdtree,
-        density,
-        n_neighbors_search=n_neighbors_search,
-        distance_upper_bound=radius_search,
-        workers=workers,
-    )
+    if use_gpu_nhdn:
+        nhdn = sort_nhdn(
+            X,
+            density,
+            max_distance=radius_search,
+            n_neighbors_search=n_neighbors_search,
+            device=device,
+            show_progress=logger.isEnabledFor(DARTSORTVERBOSE),
+        )
+    else:
+        nhdn = nearest_higher_density_neighbor(
+            kdtree,
+            density,
+            n_neighbors_search=n_neighbors_search,
+            distance_upper_bound=radius_search,
+            workers=workers,
+        )
     if noise_density:
         nhdn[density < noise_density] = n
 
