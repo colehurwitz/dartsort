@@ -1,23 +1,39 @@
-# Builder Review — benchmark_adapter.py timing fix
+## Builder Review — Eliminate HDF5 round-trip in fit_featurization_pipeline
 
-## What was done
+### Change Summary
+Added `_fit_featurization_in_memory()` method to `BasePeeler` in `src/dartsort/peel/peel_base.py` that bypasses the HDF5 write→read cycle when fitting the featurization pipeline. Modified `fit_featurization_pipeline()` to use the in-memory path when guard conditions are met.
 
-Fixed `benchmark_adapter.py` to read the actual sorting time from `dartsort_output/timing.json` instead of using `metrics.speed_s` from `results.json`, which only contains the comparison time (0.23s vs 706.65s actual).
+### Guard Conditions (fall back to HDF5 if any fail)
+1. `featurization_pipeline.needs_residual() == False` — no whitener/decollider needing residual snips
+2. `featurization_pipeline.needs_more_features() == False` — no MixtureClassifier needing 2M+ waveforms
+3. No transformer in the pipeline has `fits_from_disk == True`
 
-## Changes
+### What the in-memory path does
+Instead of:
+1. Swap pipeline → temp `[Voltage, Waveform]` pipeline
+2. `run_subsampled_peeling()` → write detected waveforms to temp HDF5 file
+3. `subsample_waveforms()` → read waveforms back from HDF5
+4. Fit pipeline from read-back waveforms
 
-- **benchmark_adapter.py**: Modified `translate()` to accept an optional `results_dir` parameter. When provided, it reads `{results_dir}/dartsort_output/timing.json` and:
-  - Uses `timing_data["total"]` (706.65s) as `speed_seconds` instead of `metrics["speed_s"]` (0.23s)
-  - Populates `stage_timing` from all non-"total" entries, each prefixed with `dartsort_` (e.g., `dartsort_initial_detection`, `dartsort_cluster0`)
-  - Falls back to old behavior (`metrics.speed_s`, empty stage_timing) when timing.json is absent
-- **main()**: Passes `results_dir` to `translate()`
+It now:
+1. Swap pipeline → temp `[Voltage, Waveform]` pipeline
+2. Loop over shuffled chunks, call `process_chunk()` directly
+3. Accumulate `peeled_waveforms_fit`, `channels`, `peeled_voltages_fit`, `times_seconds` in CPU memory
+4. Early-stop when `max_waveforms_fit` spikes are gathered
+5. Concatenate, apply `fit_reweighting()` in memory
+6. Fit pipeline directly from in-memory tensors (`hdf5_filename=None`)
 
-## Testing
+### Pattern
+Follows the same approach as the existing `_threshold_to_fit_in_memory()` in `peel_lib.py` (commit 6f5ed692).
 
-Verified with real data files:
-- Fallback mode (no results_dir): `speed_seconds = 0.23`, empty `stage_timing` ✓
-- With timing.json: `speed_seconds = 706.65`, 9 stage timing entries with `dartsort_` prefix ✓
+### Bug fix during implementation
+The initial implementation placed `weights` on the CUDA device. This caused `RuntimeError: Expected a 'cuda' device type for generator but found 'cpu'` in `AmortizedLocalization._fit()`, which uses `WeightedRandomSampler` with a CPU-based torch generator. Fixed by keeping `weights` on CPU — the transformer moves data to device internally as needed.
 
-## Scope
+### Test Results
+- All 8 `test_dartsort.py` tests pass (including `test_initial_detection_swap[threshold]` which exercises the new in-memory path)
+- All other test failures are pre-existing and unrelated to this change
 
-Only `benchmark_adapter.py` was modified — single file, focused change.
+### Expected Impact
+- Saves ~5-15s per call on `initial_detection` and `matching1` model fits
+- Estimated total savings: ~10-30s (1.4-4.2% of 708.7s pipeline)
+- Eliminates HDF5 dataset creation, per-chunk dataset resizing, writes, and read-back operations

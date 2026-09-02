@@ -732,9 +732,25 @@ class BasePeeler(BModule):
         computation_cfg = ensure_computation_config(computation_cfg)
         device = computation_cfg.actual_device()
 
+        # Check guard conditions for the in-memory fast path:
+        # 1. No transformer needs residual snips (e.g., whitener/decollider)
+        # 2. No transformer needs more features (e.g., MixtureClassifier)
+        # 3. No transformer requires disk-based fitting
+        featurization_pipeline = self.featurization_pipeline
+        can_fit_in_memory = (
+            not featurization_pipeline.needs_residual()
+            and not featurization_pipeline.needs_more_features()
+            and not any(t.fits_from_disk for t in featurization_pipeline.transformers)
+        )
+
+        if can_fit_in_memory:
+            self._fit_featurization_in_memory(
+                featurization_pipeline, computation_cfg
+            )
+            return
+
         # disable self's featurization pipeline, replacing it with a waveform
         # saving node. then, we'll use those waveforms to fit the original
-        featurization_pipeline = self.featurization_pipeline
         self.featurization_pipeline = WaveformPipeline.from_class_names_and_kwargs(
             self.recording.get_channel_locations(),
             self.channel_index,
@@ -813,6 +829,140 @@ class BasePeeler(BModule):
                         logger.warning(f"{obj!r}: {obj!s}")
                 del waveforms
                 gc.collect()
+
+    def _fit_featurization_in_memory(self, featurization_pipeline, computation_cfg):
+        """Accumulate peeled waveforms in memory and fit featurization pipeline.
+
+        This avoids the HDF5 round-trip where run_subsampled_peeling() writes
+        all waveforms to a temp HDF5 file and subsample_waveforms() reads them
+        back.  Instead, waveforms are accumulated in CPU memory during peeling
+        and passed directly to pipeline.fit().
+
+        Guard conditions (checked by caller):
+        - featurization_pipeline.needs_residual() == False
+        - featurization_pipeline.needs_more_features() == False
+        - No transformer has fits_from_disk == True
+        """
+        from ..util.data_util import fit_reweighting
+
+        device = computation_cfg.actual_device()
+        max_waveforms_fit = self.fit_sampling_cfg.max_waveforms_fit
+
+        # Swap featurization pipeline to a temp [Voltage, Waveform] pipeline
+        # so that process_chunk() produces raw waveforms and voltages
+        self.featurization_pipeline = WaveformPipeline.from_class_names_and_kwargs(
+            self.recording.get_channel_locations(),
+            self.channel_index,
+            [
+                ("Voltage", {"name": "peeled_voltages_fit"}),
+                ("Waveform", {"name": "peeled_waveforms_fit"}),
+            ],
+            waveform_cfg=self.waveform_cfg,
+            sampling_frequency=self.recording.sampling_frequency,
+        )
+
+        # Get chunk starts — same logic as peel() with shuffle=True
+        chunk_starts = self.get_chunk_starts()
+        chunk_starts = np.asarray(chunk_starts, dtype=np.int64)
+        # Shuffle chunks — same as peel(shuffle=True)
+        chunk_starts = self.sample_chunks(
+            chunk_starts_samples=chunk_starts,
+            n_chunks=len(chunk_starts),
+        )
+
+        # Accumulate waveforms in memory
+        waveform_chunks: list[torch.Tensor] = []
+        channel_chunks: list[torch.Tensor] = []
+        voltage_chunks: list[torch.Tensor] = []
+        times_seconds_chunks: list[torch.Tensor] = []
+        n_spikes = 0
+        waveforms = fixed_properties = None
+
+        self.to(device)
+        self.eval()
+        try:
+            with torch.no_grad():
+                for chunk_start in chunk_starts:
+                    result = self.process_chunk(
+                        int(chunk_start),
+                        return_residual=False,
+                        skip_features=False,
+                        to_cpu=True,
+                    )
+                    n_new = result["n_spikes"]
+                    if n_new:
+                        waveform_chunks.append(result["peeled_waveforms_fit"])
+                        channel_chunks.append(result["channels"])
+                        voltage_chunks.append(result["peeled_voltages_fit"])
+                        times_seconds_chunks.append(result["times_seconds"])
+                        n_spikes += n_new
+
+                    # Early stopping — same condition as peel()
+                    if n_spikes >= max_waveforms_fit:
+                        break
+
+            # park myself on cpu while models fit
+            self.to(device="cpu")
+
+            if not n_spikes:
+                raise ValueError("Found no spikes when trying to fit featurizers.")
+
+            # Concatenate accumulated chunks
+            waveforms = torch.cat(waveform_chunks)
+            channels = torch.cat(channel_chunks)
+            voltages = torch.cat(voltage_chunks)
+            times_seconds = torch.cat(times_seconds_chunks)
+            del waveform_chunks, channel_chunks, voltage_chunks, times_seconds_chunks
+
+            # Compute amplitude-based reweighting — same logic as
+            # subsample_waveforms() uses internally
+            weights = fit_reweighting(
+                voltages=voltages.numpy(force=True),
+                fit_sampling=self.fit_sampling_cfg.fit_sampling,
+                fit_max_reweighting=self.fit_sampling_cfg.fit_max_reweighting,
+                voltages_dataset_name="peeled_voltages_fit",
+            )
+            del voltages
+
+            # Build fixed_properties matching what subsample_waveforms
+            # would produce for self.fixed_property_keys
+            fixed_properties: dict[str, torch.Tensor] = {}
+            for key in self.fixed_property_keys:
+                if key == "channels":
+                    fixed_properties["channels"] = channels.to(device)
+                elif key == "times_seconds":
+                    fixed_properties["times_seconds"] = times_seconds.to(device)
+            if weights is not None:
+                fixed_properties["weights"] = torch.as_tensor(weights)
+            else:
+                fixed_properties["weights"] = torch.ones(n_spikes)
+            del channels, times_seconds
+
+            # Fit the real featurization pipeline
+            workers = computation_cfg.actual_n_jobs(small=True, cpu=True)
+            _, workers = handle_negative_jobs(workers)
+            featurization_pipeline.register_cpu_workers(workers)
+            featurization_pipeline = featurization_pipeline.to(device)
+            featurization_pipeline.fit(
+                recording=self.recording,
+                waveforms=waveforms,
+                computation_cfg=computation_cfg,
+                hdf5_filename=None,
+                waveforms_dataset_name="peeled_waveforms_fit",
+                **fixed_properties,
+            )
+            featurization_pipeline = featurization_pipeline.to("cpu")
+            self.featurization_pipeline = featurization_pipeline
+        finally:
+            self.to(device="cpu")
+            del fixed_properties
+            gc.collect()
+            if getrefcount(waveforms) > 2:
+                logger.warning(f"Fit waveforms had {getrefcount(waveforms)=}")
+                for obj in gc.get_referrers(waveforms):
+                    logger.warning(f"{obj!r}: {obj!s}")
+            del waveforms
+            gc.collect()
 
     def get_chunk_starts(
         self,
