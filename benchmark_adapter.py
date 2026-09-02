@@ -82,7 +82,7 @@ def main() -> None:
         stale_results.unlink()
 
     result = subprocess.run(
-        ["/usr/bin/python3", "-m", "spike_sort_bench", "--config", config_path],
+        [sys.executable, "-m", "spike_sort_bench", "--config", config_path],
         capture_output=True,
         text=True,
     )
